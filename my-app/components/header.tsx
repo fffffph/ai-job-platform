@@ -41,12 +41,16 @@ export function Header() {
 
         {/* Desktop CTA */}
         <div className="hidden md:flex items-center gap-4">
-          <Button variant="ghost" className="text-muted-foreground hover:text-foreground">
-            登录
-          </Button>
-          <Button className="bg-foreground text-background hover:bg-foreground/90">
-            免费注册
-          </Button>
+          <Link href="/login">
+            <Button variant="ghost" className="text-muted-foreground hover:text-foreground">
+              登录
+            </Button>
+          </Link>
+          <Link href="/register">
+            <Button className="bg-foreground text-background hover:bg-foreground/90">
+              免费注册
+            </Button>
+          </Link>
         </div>
 
         {/* Mobile Menu Button */}
@@ -74,12 +78,16 @@ export function Header() {
               </Link>
             ))}
             <div className="flex flex-col gap-2 pt-4 border-t border-border">
-              <Button variant="ghost" className="justify-start text-muted-foreground">
-                登录
-              </Button>
-              <Button className="bg-foreground text-background hover:bg-foreground/90">
-                免费注册
-              </Button>
+              <Link href="/login" onClick={() => setMobileMenuOpen(false)}>
+                <Button variant="ghost" className="justify-start text-muted-foreground w-full">
+                  登录
+                </Button>
+              </Link>
+              <Link href="/register" onClick={() => setMobileMenuOpen(false)}>
+                <Button className="bg-foreground text-background hover:bg-foreground/90 w-full">
+                  免费注册
+                </Button>
+              </Link>
             </div>
           </div>
         </div>
