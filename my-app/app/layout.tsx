@@ -1,6 +1,8 @@
 import type { Metadata } from 'next'
 import { Geist, Geist_Mono } from 'next/font/google'
 import { Analytics } from '@vercel/analytics/next'
+import { ThemeProvider } from '@/components/theme-provider'
+import { AntdRegistry } from '@ant-design/nextjs-registry'
 import './globals.css'
 
 const _geist = Geist({ subsets: ["latin"] });
@@ -35,10 +37,14 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="zh-CN">
-      <body className="font-sans antialiased bg-background">
-        {children}
-        {process.env.NODE_ENV === 'production' && <Analytics />}
+    <html lang="zh-CN" suppressHydrationWarning>
+      <body className="font-sans antialiased bg-background text-foreground transition-colors duration-300">
+        <AntdRegistry>
+          <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+            {children}
+            {process.env.NODE_ENV === 'production' && <Analytics />}
+          </ThemeProvider>
+        </AntdRegistry>
       </body>
     </html>
   )
