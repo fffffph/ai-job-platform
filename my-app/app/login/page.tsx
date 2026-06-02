@@ -5,6 +5,7 @@ import { Form, Input, Button, Checkbox, Card, ConfigProvider, theme, message, Ap
 import { Mail, Lock, LogIn, UserPlus } from 'lucide-react';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
+import { useRouter } from 'next/navigation';
 
 /**
  * 登录页 - 黑色科技风
@@ -12,11 +13,13 @@ import { motion } from 'framer-motion';
 const LoginContent = () => {
   const { message } = App.useApp();
   const [form] = Form.useForm();
+  const router = useRouter();
 
   const onFinish = (values: any) => {
     console.log('Login attempt:', values);
     if (values.email === 'admin@example.com' && values.password === '123456') {
       message.success('登录成功！');
+      router.push('/dashboard');
     } else {
       message.error('登录失败！');
     }

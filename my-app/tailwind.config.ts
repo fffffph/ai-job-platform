@@ -1,5 +1,6 @@
 import type { Config } from "tailwindcss";
-import animate from "tw-animate-css"; // @ts-ignore
+// @ts-expect-error missing types
+import animate from "tw-animate-css";
 
 export default {
   content: [
