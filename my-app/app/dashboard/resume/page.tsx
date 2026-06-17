@@ -11,6 +11,7 @@ import {
   RocketOutlined
 } from '@ant-design/icons';
 import { motion, AnimatePresence } from 'framer-motion';
+import { parseResume } from '@/app/actions/parseResume';
 
 const { Dragger } = Upload;
 const { TextArea } = Input;
@@ -21,8 +22,9 @@ export default function ResumeOptimizationPage() {
   const [hasResult, setHasResult] = useState(false);
   const [resumeText, setResumeText] = useState("");
   const [fileList, setFileList] = useState<any[]>([]);
+  const [optimizationResult, setOptimizationResult] = useState<string>("");
 
-  const handleOptimize = () => {
+  const handleOptimize = async () => {
     if (!resumeText && fileList.length === 0) {
       messageApi.warning("请先上传简历或输入简历内容");
       return;
@@ -30,13 +32,58 @@ export default function ResumeOptimizationPage() {
 
     setIsOptimizing(true);
     setHasResult(false);
+    setOptimizationResult("");
 
-    // 模拟 AI 处理延迟
-    setTimeout(() => {
+    try {
+      let contentToOptimize = resumeText;
+
+      // 提取文件内容（如果有上传文件且没有文本输入，优先解析文件）
+      if (fileList.length > 0 && !resumeText) {
+        const file = fileList[0].originFileObj;
+        if (file) {
+          const formData = new FormData();
+          formData.append('file', file);
+          const parseResult = await parseResume(formData);
+          
+          if (parseResult.success && parseResult.text) {
+            contentToOptimize = parseResult.text;
+          } else {
+            messageApi.error(parseResult.error || "文件解析失败");
+            setIsOptimizing(false);
+            return;
+          }
+        }
+      }
+
+      if (!contentToOptimize || contentToOptimize.trim() === "") {
+        messageApi.warning("无法获取有效的简历内容");
+        setIsOptimizing(false);
+        return;
+      }
+
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ resume: contentToOptimize }),
+      });
+
+      const data = await res.json();
+
+      if (data.success) {
+        setOptimizationResult(data.result);
+        setHasResult(true);
+        messageApi.success("AI 简历优化完成！");
+      } else {
+        messageApi.error(data.message || "AI 优化失败");
+      }
+    } catch (error) {
+      console.error(error);
+      messageApi.error("网络请求失败，请稍后再试");
+    } finally {
       setIsOptimizing(false);
-      setHasResult(true);
-      messageApi.success("AI 简历优化完成！");
-    }, 3000);
+    }
   };
 
   return (
@@ -217,18 +264,8 @@ export default function ResumeOptimizationPage() {
                           优化建议 (AI 诊断)
                         </h4>
                         <div className="space-y-4">
-                          <div className="bg-yellow-500/10 border border-yellow-500/20 p-4 rounded-lg">
-                            <p className="text-sm font-medium text-yellow-600 dark:text-yellow-500 mb-2">建议一：增加量化数据</p>
-                            <p className="text-sm text-muted-foreground">
-                              原句："负责公司后台管理系统的前端开发，提升了页面加载速度。" <br/>
-                              <span className="text-green-600 dark:text-green-500 font-medium mt-2 inline-block">✨ AI 优化后："主导后台管理系统前端重构，通过代码分割和懒加载，将首屏加载时间从 3.2s 降低至 1.1s，提升了 65% 的性能。"</span>
-                            </p>
-                          </div>
-                          <div className="bg-yellow-500/10 border border-yellow-500/20 p-4 rounded-lg">
-                            <p className="text-sm font-medium text-yellow-600 dark:text-yellow-500 mb-2">建议二：补充核心关键词</p>
-                            <p className="text-sm text-muted-foreground">
-                              您的目标岗位是全栈/高级前端，建议在技能清单中补充 <strong>"Node.js", "TypeScript", "CI/CD"</strong> 等关键词，以提升 ATS (简历筛选系统) 的通过率。
-                            </p>
+                          <div className="bg-card border border-border p-4 rounded-lg whitespace-pre-wrap text-sm text-muted-foreground">
+                            {optimizationResult || "AI 暂无具体建议"}
                           </div>
                         </div>
                       </div>
