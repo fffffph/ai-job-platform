@@ -4,9 +4,9 @@
   "private": true,
   "description": "AI简历优化 - 微前端子应用。作为 qiankun 子应用独立部署，提供简历上传、解析、AI优化建议等完整功能。",
   "scripts": {
-    "dev": "vite --port 3001",
+    "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview --port 3001"
+    "preview": "vite preview"
   },
   "dependencies": {
     "@ant-design/icons": "^6.2.3",
