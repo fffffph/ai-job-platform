@@ -1,0 +1,34 @@
+{
+  "compilerOptions": {
+    // ========== 编译目标与模块配置 ==========
+    // 输出 ES2017，兼容主流浏览器
+    "target": "ES2017",
+    // 使用 ESNext 模块语法，由 Vite 做进一步转换
+    "module": "ESNext",
+    // 模块解析策略：bundler 模式适配 Vite 打包
+    "moduleResolution": "bundler",
+    // JSX 运行时：自动导入 React（React 17+ 的新 JSX 转换）
+    "jsx": "react-jsx",
+
+    // ========== 路径别名 ==========
+    // 与主应用保持一致，@ 指向 src 目录
+    "paths": {
+      "@/*": ["./src/*"]
+    },
+    "baseUrl": ".",
+
+    // ========== 严格模式 ==========
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+
+    // ========== 类型声明 ==========
+    "lib": ["ES2017", "DOM", "DOM.Iterable"]
+  },
+  "include": ["src", "vite-env.d.ts"],
+  "exclude": ["node_modules", "dist"]
+}

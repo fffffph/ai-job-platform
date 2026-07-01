@@ -1,3 +1,22 @@
+/**
+ * parseResume.ts —— 简历文件解析 (Server Action)
+ *
+ * 【注意】
+ * 此文件为 Next.js Server Action（'use server'），仅在主应用内部使用。
+ * 微前端子应用无法直接调用 Server Action，需通过 /api/parse-resume API 路由访问。
+ *
+ * 【功能】
+ * 解析上传的简历文件，提取纯文本内容。
+ * 支持格式：TXT（直接读取）、DOCX（mammoth 解析）、PDF（pdf2json 解析）
+ *
+ * 【微前端 API 替代方案】
+ * 子应用通过 fetch('/api/parse-resume', { method: 'POST', body: formData }) 调用，
+ * 实现相同的文件解析功能。详见 app/api/parse-resume/route.ts
+ *
+ * 【调试日志】
+ * key=cloudbase 路由用于可观测性上报（环境变量 LOG_RESUME_PARSE 控制）
+ */
+
 'use server';
 
 import mammoth from 'mammoth';
