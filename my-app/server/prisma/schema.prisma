@@ -1,0 +1,63 @@
+/**
+ * ============================================
+ * Prisma Schema —— 数据库模型定义（Prisma 7）
+ * ============================================
+ *
+ * 【Prisma 7 变更说明】
+ * datasource 块中不再支持 `url` 属性。
+ * 数据库连接 URL 通过 prisma.config.ts 配置（迁移时使用）
+ * 和 PrismaClient 构造函数的 datasourceUrl 参数（运行时使用）。
+ *
+ * 【迁移命令（Prisma 7）】
+ * npx prisma migrate dev --name init   → 创建数据库表（读取 prisma.config.ts 的 URL）
+ * npx prisma generate                   → 生成 Prisma Client 类型
+ * npx prisma studio                     → 打开数据库可视化界面
+ *
+ * @see https://pris.ly/d/config-datasource
+ */
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+/**
+ * 数据源：PostgreSQL
+ *
+ * Prisma 7 中 url 配置已移至 prisma.config.ts 和 PrismaClient 构造函数。
+ * 此 datasource 块仅声明数据库类型。
+ */
+datasource db {
+  provider = "postgresql"
+}
+
+/**
+ * ============================================
+ * User 模型 —— 用户表
+ * ============================================
+ *
+ * 【字段说明】
+ * - id        : UUID 主键，自动生成，全局唯一
+ * - email     : 邮箱，唯一索引，用于登录
+ * - password  : 密码哈希（bcrypt 加密后的密文，不存储明文！）
+ * - name      : 用户昵称/姓名，可选
+ * - createdAt : 注册时间，自动生成
+ * - updatedAt : 最后更新时间，Prisma 自动管理
+ *
+ * 【安全设计】
+ * 密码字段不存储明文！注册时通过 bcrypt.hash() 加密后存入数据库，
+ * 登录时通过 bcrypt.compare() 比对明文与密文。
+ *
+ * 【索引说明】
+ * @@unique([email]) — 邮箱唯一约束，确保同一邮箱只能注册一次
+ *                     同时自动创建索引，加速按邮箱查询
+ */
+model User {
+  id        String   @id @default(uuid()) @map("id")
+  email     String   @unique @map("email")
+  password  String   @map("password")
+  name      String?  @map("name")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("users")
+}

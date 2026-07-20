@@ -44,6 +44,7 @@
     "ai": "^6.0.195",
     "antd": "^6.4.0",
     "autoprefixer": "^10.4.20",
+    "axios": "^1.18.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "1.1.1",
