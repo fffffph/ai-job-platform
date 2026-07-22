@@ -84,6 +84,26 @@ export interface AuthResponseData {
     id: string;
     email: string;
     name: string | null;
+    avatar: string | null;
+    bio: string | null;
     createdAt: Date;
   };
+}
+
+// ========== 用户资料相关类型 ==========
+
+/** 更新用户资料请求体 */
+export interface UpdateProfileRequest {
+  /** 用户昵称 */
+  name?: string;
+  /** 个人简介 */
+  bio?: string;
+}
+
+/** 修改密码请求体 */
+export interface ChangePasswordRequest {
+  /** 旧密码 */
+  oldPassword: string;
+  /** 新密码 */
+  newPassword: string;
 }

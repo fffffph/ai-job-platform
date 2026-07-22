@@ -40,6 +40,8 @@ datasource db {
  * - email     : 邮箱，唯一索引，用于登录
  * - password  : 密码哈希（bcrypt 加密后的密文，不存储明文！）
  * - name      : 用户昵称/姓名，可选
+ * - avatar    : 头像图片 URL，null 时前端用首字母占位
+ * - bio       : 个人简介，可选
  * - createdAt : 注册时间，自动生成
  * - updatedAt : 最后更新时间，Prisma 自动管理
  *
@@ -56,6 +58,8 @@ model User {
   email     String   @unique @map("email")
   password  String   @map("password")
   name      String?  @map("name")
+  avatar    String?  @map("avatar")
+  bio       String?  @map("bio")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 

@@ -53,10 +53,27 @@ export default defineConfig(({ mode }) => {
       headers: {
         'Access-Control-Allow-Origin': '*',
       },
-      // 配置代理，将子应用中对主应用的 API 请求转发到主应用
+      // 配置代理，将子应用中的 API 请求转发到对应的后端服务
+      //
+      // 【多代理规则说明】
+      // Vite 代理按声明顺序匹配，更具体的路径优先。
+      // /api/auth → Express (:4000)  // 登录/注册
+      // /api/user → Express (:4000)  // 用户资料/上传
+      // /api/*    → Next.js (:3000)  // resume/chat 等业务
       proxy: {
+        // 认证 API（登录/注册）→ Express 后端
+        '/api/auth': {
+          target: 'http://localhost:4000', // Express 后端
+          changeOrigin: true,
+        },
+        // 用户 API（资料/密码/头像）→ Express 后端
+        '/api/user': {
+          target: 'http://localhost:4000', // Express 后端
+          changeOrigin: true,
+        },
+        // 其余 API（parse-resume、chat）→ Next.js 主应用
         '/api': {
-          target: 'http://localhost:3000', // 主应用 Next.js 开发服务器
+          target: 'http://localhost:3000', // Next.js 主应用
           changeOrigin: true,
         },
       },

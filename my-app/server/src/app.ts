@@ -15,9 +15,14 @@
  */
 
 import express, { type Express } from "express";
+import path from "path";
+import { fileURLToPath } from "url";
 import cors from "cors";
 import authRouter from "./routes/auth.routes.js";
+import userRouter from "./routes/user.routes.js";
 import { errorHandler } from "./middleware/errorHandler.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ============================================================
 // 创建 Express 应用
@@ -54,7 +59,18 @@ app.use(
 );
 
 /**
- * 2. JSON 请求体解析
+ * 2. 静态文件服务
+ *
+ * 将 uploads 目录作为静态资源暴露，前端通过 /uploads/avatars/xxx.jpg 访问上传的头像。
+ * 必须在其他中间件之前注册，避免被 JSON 解析拦截。
+ */
+app.use(
+  "/uploads",
+  express.static(path.resolve(__dirname, "../uploads"))
+);
+
+/**
+ * 3. JSON 请求体解析
  *
  * 自动将 Content-Type: application/json 的请求体解析为 JS 对象。
  * 解析后的数据挂载在 req.body 上。
@@ -62,7 +78,7 @@ app.use(
 app.use(express.json());
 
 /**
- * 3. URL-encoded 请求体解析
+ * 4. URL-encoded 请求体解析
  *
  * 解析 Content-Type: application/x-www-form-urlencoded 的请求体。
  * extended: true 表示使用 qs 库解析嵌套对象。
@@ -96,6 +112,18 @@ app.get("/api/health", (_req, res) => {
  * - POST /api/auth/login
  */
 app.use("/api/auth", authRouter);
+
+/**
+ * 用户路由
+ *
+ * 所有 /api/user/* 路径的请求都交给 userRouter 处理。
+ * 具体路由定义在 routes/user.routes.ts 中：
+ * - GET  /api/user/profile  — 获取用户资料（需认证）
+ * - PUT  /api/user/profile  — 更新用户资料（需认证）
+ * - PUT  /api/user/password — 修改密码（需认证）
+ * - POST /api/user/avatar   — 上传头像（需认证）
+ */
+app.use("/api/user", userRouter);
 
 // ============================================================
 // 全局错误处理

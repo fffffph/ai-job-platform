@@ -28,6 +28,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { loadMicroApp, type MicroApp } from 'qiankun';
 import { Spin, Alert, Button } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
+import { getToken, setToken, removeToken } from '@/api';
 
 // ========== 子应用配置 ==========
 
@@ -103,8 +104,22 @@ const MicroAppLoader: React.FC = () => {
           container: MICRO_APP_CONFIG.container,
           // 传递给子应用的 props，子应用在 mount(props) 中接收
           props: {
-            // 可以传递全局状态、用户信息、主题配置等
-            // 子应用通过 mount(props) 钩子获取这些数据
+            /**
+             * Token 共享机制 — 子应用通过这三个函数与主应用共享登录状态：
+             *
+             * token: 当前 Token 值（用于子应用初始化时立即读取）
+             * getToken: 子应用随时调用，获取最新 Token（用于 API 请求注入 Authorization 头）
+             * setToken: 子应用登录成功后，通过此函数回写 Token 到主应用的 localStorage
+             * removeToken: 子应用退出登录时，清除主应用的 Token
+             * isInQiankun: 标记当前运行在 qiankun 环境中，子应用据此决定是否显示独立登录页
+             */
+            token: getToken(),
+            getToken,
+            setToken,
+            removeToken,
+            isInQiankun: true,
+
+            // 其他业务标识
             appName: 'CareerAI',
             pageTitle: 'AI 简历优化',
           },

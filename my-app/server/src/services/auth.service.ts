@@ -111,6 +111,8 @@ export async function register(
       id: user.id,
       email: user.email,
       name: user.name,
+      avatar: user.avatar,
+      bio: user.bio,
       createdAt: user.createdAt,
     },
   };
@@ -173,6 +175,8 @@ export async function login(
       id: user.id,
       email: user.email,
       name: user.name,
+      avatar: user.avatar,
+      bio: user.bio,
       createdAt: user.createdAt,
     },
   };

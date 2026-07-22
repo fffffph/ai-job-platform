@@ -25,6 +25,7 @@ import {
   RocketOutlined
 } from '@ant-design/icons';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useAuth } from '../../contexts/AuthContext';
 
 const { Dragger } = Upload;
 const { TextArea } = Input;
@@ -45,6 +46,10 @@ const ResumeOptimizationPage: React.FC = () => {
   // ========== Ant Design 静态方法 ==========
   // AntdApp 包裹器中的 useApp() 提供 message/modal/notification 实例
   const { message } = App.useApp();
+
+  // ========== 认证（Token 注入）==========
+  // 从 AuthContext 获取当前 Token，注入到后续 API 请求的 Authorization 头中
+  const { token } = useAuth();
 
   // ========== 状态管理 ==========
   const [isOptimizing, setIsOptimizing] = useState(false);   // 是否正在优化
@@ -86,6 +91,9 @@ const ResumeOptimizationPage: React.FC = () => {
           // 调用主应用的简历解析 API（替代原来的 Server Action）
           const parseRes = await fetch('/api/parse-resume', {
             method: 'POST',
+            headers: {
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
             body: formData,
           });
 
@@ -113,6 +121,7 @@ const ResumeOptimizationPage: React.FC = () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({ resume: contentToOptimize }),
       });
@@ -343,7 +352,7 @@ const ResumeOptimizationPage: React.FC = () => {
                   </div>
 
                   {/* 骨架屏占位 */}
-                  <Spin tip="AI 正在分析您的简历..." size="large">
+                  <Spin description="AI 正在分析您的简历..." size="large">
                     <div style={{ padding: '48px', background: 'var(--background, #f5f5f5)', borderRadius: '8px' }} />
                   </Spin>
                 </motion.div>
