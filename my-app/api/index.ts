@@ -13,6 +13,10 @@ export {
   updateProfile,
   changePassword,
   uploadAvatar,
+  getDeepSeekKeyStatus,
+  saveDeepSeekKey,
+  deleteDeepSeekKey,
+  testDeepSeekKey,
 } from "./modules/user";
 
 // Token 工具函数
@@ -28,6 +32,8 @@ export type {
   UpdateProfileParams,
   ChangePasswordParams,
   AvatarResult,
+  DeepSeekKeyStatus,
+  DeepSeekKeyTestResult,
   LoginParams,
   RegisterParams,
 } from "./types";

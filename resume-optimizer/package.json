@@ -11,7 +11,10 @@
   "dependencies": {
     "@ant-design/icons": "^6.2.3",
     "antd": "^6.4.0",
+    "axios": "^1.18.1",
+    "docx": "^9.7.1",
     "framer-motion": "^12.38.0",
+    "html2pdf.js": "^0.14.0",
     "qiankun": "^2.10.16",
     "react": "^19",
     "react-dom": "^19"

@@ -57,9 +57,10 @@ export default defineConfig(({ mode }) => {
       //
       // 【多代理规则说明】
       // Vite 代理按声明顺序匹配，更具体的路径优先。
-      // /api/auth → Express (:4000)  // 登录/注册
-      // /api/user → Express (:4000)  // 用户资料/上传
-      // /api/*    → Next.js (:3000)  // resume/chat 等业务
+      // /api/auth   → Express (:4000)  // 登录/注册
+      // /api/user   → Express (:4000)  // 用户资料/上传
+      // /api/resume → Express (:4000)  // 简历优化（parse/optimize/chat）
+      // /api/*      → Next.js (:3000)  // parse-resume/chat 旧版（向后兼容）
       proxy: {
         // 认证 API（登录/注册）→ Express 后端
         '/api/auth': {
@@ -71,7 +72,12 @@ export default defineConfig(({ mode }) => {
           target: 'http://localhost:4000', // Express 后端
           changeOrigin: true,
         },
-        // 其余 API（parse-resume、chat）→ Next.js 主应用
+        // 简历 API（解析/优化/对话）→ Express 后端
+        '/api/resume': {
+          target: 'http://localhost:4000', // Express 后端
+          changeOrigin: true,
+        },
+        // 其余 API（如旧的 /api/parse-resume, /api/chat）→ Next.js 主应用
         '/api': {
           target: 'http://localhost:3000', // Next.js 主应用
           changeOrigin: true,
@@ -140,15 +146,33 @@ export default defineConfig(({ mode }) => {
 
       // Rollup 额外配置
       rollupOptions: {
-        // 外部依赖：React 和 ReactDOM 由主应用提供，避免重复打包
-        // 这样可以减小子应用体积，并确保 React 实例唯一
-        external: ['react', 'react-dom'],
+        /**
+         * 【外部依赖配置 —— 生产构建改为"自带 React"，原因如下】
+         *
+         * 原方案：external: ['react','react-dom'] + globals React/ReactDOM
+         *   即让 UMD 从全局变量取 React，由主应用注入，避免重复打包。
+         *
+         * 但在 React 19 + qiankun 生产构建下这个方案不可靠：
+         *   1. React 19 已移除官方 UMD 构建（node_modules/react/umd 不存在），
+         *      无法用 <script> 提前加载 React 到全局
+         *   2. main.tsx 用的是 `import ReactDOM from "react-dom/client"`，
+         *      而 externals 只声明了 'react'/'react-dom'，没声明 'react-dom/client'
+         *      → client 子模块被打包进 UMD，它内部仍会去取外部的 'react-dom'
+         *   3. React 19 的 react-dom 包并不导出 createRoot（只有 __DOM_INTERNALS_* 等），
+         *      全局注入的对象对不上，运行时会报错
+         *
+         * 因此改为不外部化：让 UMD 把 React 一起打包（约 +200KB）。
+         * 子应用挂载在自己的容器内、用自己的 createRoot，与主应用 React 实例
+         * 互不干扰（无需跨树共享 context），功能完全正常，且与开发环境行为一致。
+         *
+         * 若将来要恢复"共享 React"以省体积，需同时满足：
+         *   改 import 为 `import { createRoot } from 'react-dom/client'`
+         *   + external 增加 'react-dom/client'
+         *   + 主应用侧在加载子应用前设置 window.React / window.ReactDOM
+         */
+        external: [],
         output: {
-          // 为外部依赖指定全局变量名
-          globals: {
-            react: 'React',
-            'react-dom': 'ReactDOM',
-          },
+          globals: {},
         },
       },
 

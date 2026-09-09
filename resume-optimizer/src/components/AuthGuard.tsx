@@ -1,7 +1,5 @@
 /**
- * ============================================
  * AuthGuard —— 认证路由守卫
- * ============================================
  *
  * 【职责】
  * 检查是否已登录，未登录时重定向到登录页。
@@ -9,12 +7,8 @@
  *   qiankun 模式 → 未登录时显示提示（通常不会发生，主应用已处理登录）
  *   独立模式   → 未登录时渲染 <SubLogin /> 独立登录页
  *
- * 【使用方式】
- * <AuthProvider>
- *   <AuthGuard>
- *     <YourPage />
- *   </AuthGuard>
- * </AuthProvider>
+ * 【暗色适配】
+ * 替换固定色 #999 → var(--text-3)
  */
 
 import React from "react";
@@ -47,8 +41,8 @@ const AuthGuard: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           height: "100vh",
           justifyContent: "center",
           alignItems: "center",
-          color: "#999",
-          fontSize: "16px",
+          color: "var(--text-3)",
+          fontSize: 16,
         }}
       >
         请先在主应用中登录后访问此功能

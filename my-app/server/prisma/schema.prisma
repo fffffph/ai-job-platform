@@ -63,5 +63,15 @@ model User {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  /**
+   * DeepSeek API Key 密文（用户自行配置，服务端 AES-256-GCM 加密后存储）
+   * - 明文绝不入库、绝不写日志、绝不返回前端
+   * - 按用户隔离，只有本用户能通过认证接口读写
+   * - null 表示未配置
+   */
+  deepseekKeyCipher    String?  @map("deepseek_key_cipher")
+  /** DeepSeek API Key 最后配置/更新时间 */
+  deepseekKeyUpdatedAt DateTime? @map("deepseek_key_updated_at")
+
   @@map("users")
 }

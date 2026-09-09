@@ -82,8 +82,17 @@ const client: AxiosInstance = axios.create({
    *
    * 开发环境下指向后端 Express 服务器（:4000），
    * 生产环境通过环境变量配置或使用相对路径（同域部署）。
+   *
+   * 【Docker 部署说明】
+   * 这里必须用 ?? 而不是 || ：
+   *   - ||  会把空字符串 "" 当作"没配置"，回退到 localhost:4000
+   *     → Docker 里浏览器去连用户自己电脑的 4000 端口，必然失败
+   *   - ??  只在 undefined/null 时回退，空字符串被保留
+   *     → baseURL = "" 表示相对路径，请求打到当前域名，由 nginx 反代到后端
+   *
+   * 开发环境不设 NEXT_PUBLIC_API_URL（undefined）→ 走 localhost:4000，行为不变。
    */
-  baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000",
+  baseURL: process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000",
 
   /** 请求超时 */
   timeout: REQUEST_TIMEOUT,

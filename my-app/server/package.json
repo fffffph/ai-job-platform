@@ -5,9 +5,11 @@
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch --env-file=.env src/index.ts",
+    "_comment_dev": "dev 启动前自动跑 prisma generate，确保 @prisma/client 有最新导出。否则 import { PrismaClient } 会报 SyntaxError。schema 改了 tsx watch 会重启。",
+    "dev": "prisma generate && tsx watch --env-file=.env src/index.ts",
     "build": "tsc",
-    "start": "node --env-file=.env dist/index.js",
+    "_comment_start": "start 用 --env-file-if-exists：Docker 里没有 .env 文件也不会报错（环境变量由 compose 注入）；本地有 .env 时照常加载。写成 --env-file 在容器内会因文件缺失直接崩溃。",
+    "start": "node --env-file-if-exists=.env dist/index.js",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev --name init",
     "db:push": "prisma db push",
@@ -28,7 +30,10 @@
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
-    "multer": "^2.2.0"
+    "mammoth": "^1.12.0",
+    "multer": "^2.2.0",
+    "pdf2json": "^4.0.3",
+    "prisma": "^7.8.0"
   },
   "devDependencies": {
     "@types/bcrypt": "^6.0.0",
@@ -37,7 +42,6 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/multer": "^2.2.0",
     "@types/node": "^20.19.41",
-    "prisma": "^7.8.0",
     "tsx": "^4.19.0",
     "typescript": "^5.9.3"
   }

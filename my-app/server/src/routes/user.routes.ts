@@ -36,6 +36,22 @@ userRouter.put("/profile", authMiddleware, userController.updateProfile);
 userRouter.put("/password", authMiddleware, userController.changePassword);
 
 // ============================================================
+// DeepSeek API Key 管理路由（需认证，按用户隔离）
+// ============================================================
+
+// 获取密钥状态（脱敏）
+userRouter.get("/deepseek-key", authMiddleware, userController.getDeepSeekKey);
+
+// 保存密钥（加密存储）
+userRouter.put("/deepseek-key", authMiddleware, userController.saveDeepSeekKey);
+
+// 删除密钥
+userRouter.delete("/deepseek-key", authMiddleware, userController.deleteDeepSeekKey);
+
+// 测试连通性（不落库）
+userRouter.post("/deepseek-key/test", authMiddleware, userController.testDeepSeekKey);
+
+// ============================================================
 // 头像上传路由（需认证）
 // ============================================================
 

@@ -1,0 +1,23 @@
+# 子应用构建上下文黑名单
+
+# 依赖（容器内重装）
+node_modules
+
+# 构建产物（容器内重新构建）
+dist
+
+# 环境变量
+.env
+.env.*
+
+# 版本控制
+.git
+.gitignore
+
+# 编辑器 / 系统
+.vscode
+.idea
+.DS_Store
+
+# 日志
+*.log

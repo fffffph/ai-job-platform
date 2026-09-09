@@ -1,6 +1,20 @@
 allowBuilds:
-  sharp: true
-  unrs-resolver: true
-ignoredBuiltDependencies:
+  sharp: set this to true or false
+  unrs-resolver: set this to true or false
+# pnpm 11 安全配置：白名单允许这些包运行 postinstall 脚本
+#
+# pnpm 11 关键变化：
+#   - 旧的 allowBuilds / ignoredBuiltDependencies 写法已废弃
+#   - 新的写法：onlyBuiltDependencies 数组
+#   - 文件位置：必须放在 pnpm-workspace.yaml（package.json 里已不生效）
+#
+# 白名单说明：
+#   esbuild        —— 下载平台对应的二进制（@esbuild/linux-x64 等）
+#   sharp          —— Next.js 图片优化，下载预编译 native 包
+#   unrs-resolver  —— Next.js 路由解析依赖
+#   core-js        —— polyfill 初始化
+onlyBuiltDependencies:
+  - esbuild
   - sharp
   - unrs-resolver
+  - core-js

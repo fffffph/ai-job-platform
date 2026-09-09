@@ -64,6 +64,24 @@ export interface AvatarResult {
   avatar: string;
 }
 
+// ========== DeepSeek API Key 类型 ==========
+
+/** DeepSeek API Key 状态（脱敏，绝不含明文） */
+export interface DeepSeekKeyStatus {
+  /** 是否已配置 */
+  configured: boolean;
+  /** 脱敏尾号，如 "sk-****abcd"，未配置时为空字符串 */
+  maskedTail: string;
+  /** 最后更新时间（ISO 字符串），未配置时为 null */
+  updatedAt: string | null;
+}
+
+/** DeepSeek API Key 连通性测试结果 */
+export interface DeepSeekKeyTestResult {
+  ok: boolean;
+  message: string;
+}
+
 // ========== 认证相关类型 ==========
 
 /** 登录/注册成功返回的用户信息和 Token */
@@ -99,6 +117,10 @@ export enum ErrorCode {
   SERVER_ERROR = "SERVER_ERROR",
   /** 旧密码不正确 */
   WRONG_PASSWORD = "WRONG_PASSWORD",
+  /** 未配置 DeepSeek API Key */
+  DEEPSEEK_KEY_NOT_CONFIGURED = "DEEPSEEK_KEY_NOT_CONFIGURED",
+  /** DeepSeek API Key 格式不正确 */
+  INVALID_KEY_FORMAT = "INVALID_KEY_FORMAT",
 }
 
 /** 错误码对应的用户提示文案 */
@@ -108,4 +130,7 @@ export const ERROR_MESSAGES: Record<string, string> = {
   [ErrorCode.UNAUTHORIZED]: "登录已过期，请重新登录",
   [ErrorCode.SERVER_ERROR]: "服务器繁忙，请稍后重试",
   [ErrorCode.WRONG_PASSWORD]: "旧密码不正确，请检查后重试",
+  [ErrorCode.DEEPSEEK_KEY_NOT_CONFIGURED]:
+    "需先在个人中心配置 DeepSeek API Key 才能使用 AI 简历优化",
+  [ErrorCode.INVALID_KEY_FORMAT]: "API Key 格式不正确，请检查后重试",
 };

@@ -52,6 +52,7 @@ import {
 } from "@/api";
 import type { UserProfile } from "@/api";
 import { useRouter } from "next/navigation";
+import DeepSeekKeyCard from "./components/DeepSeekKeyCard";
 
 // ============================================================
 // 后端基础地址（用于拼接头像 URL）
@@ -257,7 +258,7 @@ const ProfilePage = () => {
               padding: "64px",
             }}
           >
-            <p style={{ color: "#999", marginBottom: "16px", fontSize: "16px" }}>
+            <p style={{ color: "var(--muted-foreground)", marginBottom: "16px", fontSize: "16px" }}>
               {error}
             </p>
             <Button type="primary" onClick={loadProfile}>
@@ -307,7 +308,7 @@ const ProfilePage = () => {
                       height: "120px",
                       borderRadius: "50%",
                       objectFit: "cover",
-                      border: "3px solid #f0f0f0",
+                      border: "3px solid var(--border-1)",
                     }}
                   />
                 ) : (
@@ -316,7 +317,9 @@ const ProfilePage = () => {
                       width: "120px",
                       height: "120px",
                       borderRadius: "50%",
-                      background: "linear-gradient(135deg, #667eea, #764ba2)",
+                      // 头像占位渐变：跟随主题感知，明暗都用同一渐变没问题（半透明）
+                      background:
+                        "linear-gradient(135deg, #667eea, #764ba2)",
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
@@ -334,11 +337,13 @@ const ProfilePage = () => {
                     position: "absolute",
                     inset: 0,
                     borderRadius: "50%",
-                    background: "rgba(0, 0, 0, 0.5)",
+                    // hover 半透明盖层：暗色下用更深的色以保证对比
+                    background:
+                      "color-mix(in srgb, var(--background) 60%, transparent)",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    color: "#fff",
+                    color: "var(--foreground)",
                     fontSize: "14px",
                     opacity: 0,
                     transition: "opacity 0.2s",
@@ -376,12 +381,14 @@ const ProfilePage = () => {
                       position: "absolute",
                       inset: 0,
                       borderRadius: "50%",
-                      background: "rgba(0, 0, 0, 0.6)",
+                      // 上传中盖层：同上
+                      background:
+                        "color-mix(in srgb, var(--background) 70%, transparent)",
                       display: "flex",
                       flexDirection: "column",
                       alignItems: "center",
                       justifyContent: "center",
-                      color: "#fff",
+                      color: "var(--foreground)",
                     }}
                   >
                     <Progress type="circle" percent={100} size={60} />
@@ -404,7 +411,7 @@ const ProfilePage = () => {
               </h2>
 
               {/* 注册时间 */}
-              <p style={{ color: "#999", fontSize: "13px", margin: 0 }}>
+              <p style={{ color: "var(--muted-foreground)", fontSize: "13px", margin: 0 }}>
                 注册于{" "}
                 {profile?.createdAt && new Date(profile.createdAt).toLocaleDateString("zh-CN", {
                   year: "numeric",
@@ -454,7 +461,7 @@ const ProfilePage = () => {
                         <Input
                           prefix={<MailOutlined />}
                           disabled
-                          style={{ color: "#999" }}
+                          style={{ color: "var(--muted-foreground)" }}
                         />
                       </Form.Item>
                     </Col>
@@ -588,6 +595,9 @@ const ProfilePage = () => {
                   </Form>
                 </div>
               </Card>
+
+              {/* DeepSeek API Key 设置卡片 */}
+              <DeepSeekKeyCard />
             </div>
           </div>
         </div>

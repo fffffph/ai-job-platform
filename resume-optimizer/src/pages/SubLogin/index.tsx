@@ -12,6 +12,11 @@
  * - 不依赖主应用的任何组件或主题
  * - 使用 Ant Design 组件（子应用已有 antd 依赖）
  * - 简洁 — 只有邮箱 + 密码 + 登录按钮
+ *
+ * 【暗色适配】
+ * - 整页渐变背景保留品牌色（蓝→紫），明暗都用同一个：跨明暗和谐自然
+ * - 卡片背景跟随主题（浅色半透明白 / 深色半透明深蓝）
+ * - 副标题色 #999 / #bbb 改 CSS 变量
  */
 
 import React, { useState } from "react";
@@ -19,29 +24,17 @@ import { Form, Input, Button, Card, App } from "antd";
 import { MailOutlined, LockOutlined } from "@ant-design/icons";
 
 interface SubLoginProps {
-  /** 登录成功回调，接收 JWT Token */
   onLoginSuccess: (token: string) => void;
 }
 
-/**
- * 子应用独立登录组件
- */
 const SubLogin: React.FC<SubLoginProps> = ({ onLoginSuccess }) => {
   const { message } = App.useApp();
   const [loading, setLoading] = useState(false);
   const [form] = Form.useForm();
 
-  /**
-   * 表单提交
-   *
-   * 调用后端 /api/auth/login（通过 Vite proxy 转发到主应用 Express 后端 :4000），
-   * 成功后通过 onLoginSuccess 将 token 传给 AuthContext。
-   */
   const handleSubmit = async (values: { email: string; password: string }) => {
     setLoading(true);
-
     try {
-      // 调用后端登录接口（Vite proxy 会将 /api/* 转发到主应用）
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -54,7 +47,6 @@ const SubLogin: React.FC<SubLoginProps> = ({ onLoginSuccess }) => {
       const data = await res.json();
 
       if (data.success) {
-        // 登录成功 → 存入 Context → AuthGuard 自动放行
         onLoginSuccess(data.data.token);
         message.success(`登录成功，欢迎 ${data.data.user.name || values.email}`);
       } else {
@@ -74,28 +66,38 @@ const SubLogin: React.FC<SubLoginProps> = ({ onLoginSuccess }) => {
         display: "flex",
         justifyContent: "center",
         alignItems: "center",
-        background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+        // 整页：品牌渐变背景，明暗都用同一个（跨模式都和谐）
+        background:
+          "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
       }}
     >
       <Card
         style={{
           width: "400px",
           borderRadius: "16px",
-          boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
+          // 卡片采用 CSS 变量：浅色半透明白 / 深色半透明深蓝
+          background: "var(--bg-card)",
+          color: "var(--text-1)",
+          boxShadow: "var(--shadow-modal)",
         }}
-        bodyStyle={{ padding: "48px 40px" }}
+        styles={{ body: { padding: "48px 40px" } }}
       >
-        {/* Logo / 标题 */}
         <div style={{ textAlign: "center", marginBottom: "32px" }}>
-          <h1 style={{ fontSize: "24px", fontWeight: 700, margin: "0 0 8px" }}>
+          <h1
+            style={{
+              fontSize: "24px",
+              fontWeight: 700,
+              margin: "0 0 8px",
+              color: "var(--text-1)",
+            }}
+          >
             AI 简历优化
           </h1>
-          <p style={{ color: "#999", fontSize: "14px", margin: 0 }}>
+          <p style={{ color: "var(--text-3)", fontSize: "14px", margin: 0 }}>
             登录以使用简历优化功能
           </p>
         </div>
 
-        {/* 登录表单 */}
         <Form form={form} layout="vertical" onFinish={handleSubmit} size="large">
           <Form.Item
             name="email"
@@ -104,20 +106,14 @@ const SubLogin: React.FC<SubLoginProps> = ({ onLoginSuccess }) => {
               { type: "email", message: "邮箱格式不正确" },
             ]}
           >
-            <Input
-              prefix={<MailOutlined />}
-              placeholder="邮箱地址"
-            />
+            <Input prefix={<MailOutlined />} placeholder="邮箱地址" />
           </Form.Item>
 
           <Form.Item
             name="password"
             rules={[{ required: true, message: "请输入密码" }]}
           >
-            <Input.Password
-              prefix={<LockOutlined />}
-              placeholder="密码"
-            />
+            <Input.Password prefix={<LockOutlined />} placeholder="密码" />
           </Form.Item>
 
           <Form.Item style={{ marginBottom: 0 }}>
@@ -137,7 +133,7 @@ const SubLogin: React.FC<SubLoginProps> = ({ onLoginSuccess }) => {
           style={{
             textAlign: "center",
             marginTop: "24px",
-            color: "#bbb",
+            color: "var(--text-3)",
             fontSize: "12px",
           }}
         >

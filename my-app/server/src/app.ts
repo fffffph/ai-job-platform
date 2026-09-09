@@ -20,6 +20,7 @@ import { fileURLToPath } from "url";
 import cors from "cors";
 import authRouter from "./routes/auth.routes.js";
 import userRouter from "./routes/user.routes.js";
+import resumeRouter from "./routes/resume.routes.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -124,6 +125,16 @@ app.use("/api/auth", authRouter);
  * - POST /api/user/avatar   — 上传头像（需认证）
  */
 app.use("/api/user", userRouter);
+
+/**
+ * 简历路由
+ *
+ * 所有 /api/resume/* 路径的请求都交给 resumeRouter 处理：
+ * - POST /api/resume/parse    — 解析简历文件
+ * - POST /api/resume/optimize — AI 优化（评分+标签+建议+优化版）
+ * - POST /api/resume/chat     — 对话式迭代修改
+ */
+app.use("/api/resume", resumeRouter);
 
 // ============================================================
 // 全局错误处理

@@ -1,0 +1,11 @@
+# ============================================
+# 根目录 .gitignore（Docker 部署相关）
+# ============================================
+# 注意：my-app / resume-optimizer 各自有自己的 .gitignore，
+# 这个文件只管根目录下新增的 Docker 部署文件。
+
+# Docker 环境变量（含 JWT 密钥、DeepSeek API Key，绝不提交）
+.env.docker
+
+# 若改用 bind mount 持久化数据库，取消下面注释
+# pgdata/

@@ -198,7 +198,7 @@ const MicroAppLoader: React.FC = () => {
               <p style={{ marginBottom: '12px' }}>
                 {errorMsg || '无法加载 AI 简历优化模块，请检查网络连接'}
               </p>
-              <p style={{ color: '#999', fontSize: '13px', marginBottom: '12px' }}>
+              <p style={{ color: 'var(--muted-foreground)', fontSize: '13px', marginBottom: '12px' }}>
                 提示：开发环境下请确保子应用已启动（npm run dev --prefix resume-optimizer）
               </p>
               <Button
@@ -245,11 +245,11 @@ const MicroAppLoader: React.FC = () => {
           justifyContent: 'center',
           alignItems: 'center',
           gap: '16px',
-          background: 'var(--background, #f5f5f5)',
+          background: 'var(--background)',
           zIndex: 1,
         }}>
           <Spin size="large" />
-          <p style={{ color: 'var(--muted-foreground, #999)', fontSize: '14px' }}>
+          <p style={{ color: "var(--muted-foreground)", fontSize: "14px" }}>
             正在加载 AI 简历优化模块...
           </p>
         </div>

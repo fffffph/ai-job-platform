@@ -1,0 +1,173 @@
+/**
+ * ============================================
+ * globals.css —— 子应用全局 CSS（包含主题变量）
+ * ============================================
+ *
+ * 【为什么需要 CSS 变量】
+ * 子应用没有 Tailwind，所有硬编码颜色（如 #fff、#888）需要响应暗色模式。
+ * 通过 CSS 变量把"颜色值"和"使用处"解耦：
+ *   - 明色 :root 上定义 --bg-card: #fff
+ *   - 暗色 .dark 上定义 --bg-card: #15192b
+ *   - 组件用 var(--bg-card) 取值
+ *
+ * 【主题来源】
+ * 子应用挂在主应用 <body> 内的 #micro-app-container 容器里，
+ * 它本身不是 <html>，所以 next-themes 给 html 加的 .dark 类
+ * 会**自然向下传递**到子应用任何子元素（CSS 选择器 .dark * 生效）。
+ *
+ * 我们约定：
+ *   1. 监听 document.documentElement.classList（= html 的 class）
+ *      就能拿到当前模式
+ *   2. 用 .dark / :root 双重选择器保证子应用独立运行时也有明色作为兜底
+ */
+
+:root {
+  /* ===== 页面与卡片 ===== */
+  --bg-page: #f5f7fa;
+  --bg-card: #ffffff;
+  --bg-soft: #fafafa;
+  --bg-elevated: #ffffff;
+
+  /* ===== 文字 ===== */
+  --text-1: #1a1a1a;       /* 主文字，对比度 16:1 */
+  --text-2: #4b5563;       /* 次要文字，7.4:1 */
+  --text-3: #6b7280;       /* 辅助文字，4.8:1 —— 明暗下限 */
+  --text-on-accent: #ffffff;
+
+  /* ===== 边框与分隔 ===== */
+  --border-1: #e5e7eb;
+  --border-2: #d1d5db;
+
+  /* ===== 强调色 ===== */
+  --accent-1: #3b82f6;
+  --accent-2: #8b5cf6;
+
+  /* ===== 状态色 ===== */
+  --success: #52c41a;       /* 绿色文字/标签 */
+  --success-bg: #f6ffed;
+  --success-border: #b7eb8f;
+  --danger: #ff4d4f;
+  --danger-bg: #fff1f0;
+  --danger-border: #ffccc7;
+  --warning: #faad14;
+  --warning-bg: #fffbe6;
+  --warning-border: #ffe58f;
+
+  /* ===== 渐变（柔和背景） ===== */
+  --gradient-soft: linear-gradient(
+    135deg,
+    rgba(59, 130, 246, 0.06),
+    rgba(139, 92, 246, 0.06)
+  );
+
+  /* ===== 阴影 ===== */
+  --shadow-card: 0 4px 16px rgba(0, 0, 0, 0.06);
+  --shadow-modal: 0 20px 60px rgba(0, 0, 0, 0.18);
+
+  /* ===== 圆角 ===== */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+}
+
+.dark {
+  --bg-page: #0b1220;
+  --bg-card: #151a2c;
+  --bg-soft: #1a2040;
+  --bg-elevated: #1d2440;
+
+  --text-1: #f3f4f6;       /* 16:1 */
+  --text-2: #d1d5db;       /* 10.4:1 */
+  --text-3: #9ca3af;       /* 6.1:1 */
+
+  --border-1: #2a2f48;
+  --border-2: #353e60;
+
+  --accent-1: #60a5fa;
+  --accent-2: #a78bfa;
+
+  --success: #4ade80;
+  --success-bg: rgba(34, 197, 94, 0.15);
+  --success-border: rgba(34, 197, 94, 0.4);
+  --danger: #ff7875;
+  --danger-bg: rgba(255, 77, 79, 0.18);
+  --danger-border: rgba(255, 77, 79, 0.45);
+  --warning: #ffc53d;
+  --warning-bg: rgba(250, 173, 20, 0.18);
+  --warning-border: rgba(250, 173, 20, 0.45);
+
+  --gradient-soft: linear-gradient(
+    135deg,
+    rgba(96, 165, 250, 0.12),
+    rgba(167, 139, 250, 0.12)
+  );
+
+  --shadow-card: 0 4px 16px rgba(0, 0, 0, 0.4);
+  --shadow-modal: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+/* ========== 全局基础样式 ========== */
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  /* 文字/背景跟随主题变量 */
+  background: var(--bg-page);
+  color: var(--text-1);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+/* ========== 平滑过渡：切换主题时不闪 ========== */
+
+/* 让所有受控元素背景色/边框/颜色都丝滑过渡 */
+* {
+  transition: background-color 0.2s ease, border-color 0.2s ease,
+    color 0.2s ease, box-shadow 0.2s ease;
+}
+
+/* ========== Antd 在暗色下的输入框/穿梭框/Modal 等补充 ========== */
+
+.dark .ant-card {
+  background: var(--bg-card);
+  border-color: var(--border-1);
+}
+
+.dark .ant-card-head {
+  border-bottom-color: var(--border-1);
+  color: var(--text-1);
+}
+
+.dark .ant-input,
+.dark .ant-input-affix-wrapper,
+.dark .ant-input-password,
+.dark .ant-select-selector,
+.dark .ant-input-number,
+.dark textarea.ant-input {
+  background: var(--bg-soft);
+  color: var(--text-1);
+  border-color: var(--border-1);
+}
+
+.dark .ant-input::placeholder,
+.dark textarea.ant-input::placeholder {
+  color: var(--text-3);
+}
+
+.dark .ant-empty-description,
+.dark .ant-typography {
+  color: var(--text-2);
+}
+
+/* ========== 暗色下文字对比度保护 ========== */
+/*
+  明暗模式全局继承 + 局部清理，避免 Ant Design defaultAlgorithm
+  给暗色输入的浅色 placeholder 在我们这里被覆盖。
+*/

@@ -20,6 +20,8 @@ import type {
   UpdateProfileParams,
   ChangePasswordParams,
   AvatarResult,
+  DeepSeekKeyStatus,
+  DeepSeekKeyTestResult,
 } from "../types";
 
 // ============================================================
@@ -118,6 +120,84 @@ export async function uploadAvatar(
     return {
       success: false,
       message: error?.message || "头像上传失败",
+      code: error?.code,
+    };
+  }
+}
+
+// ============================================================
+// DeepSeek API Key 相关 API
+// ============================================================
+
+/**
+ * 获取当前用户的 DeepSeek API Key 状态（脱敏）
+ *
+ * GET /api/user/deepseek-key（需 JWT 认证）
+ */
+export async function getDeepSeekKeyStatus(): Promise<
+  ApiResponse<DeepSeekKeyStatus>
+> {
+  try {
+    return await client.get("/api/user/deepseek-key");
+  } catch (error: any) {
+    return {
+      success: false,
+      message: error?.message || "获取 API Key 状态失败",
+      code: error?.code,
+    };
+  }
+}
+
+/**
+ * 保存 DeepSeek API Key（加密存储）
+ *
+ * PUT /api/user/deepseek-key（需 JWT 认证）
+ */
+export async function saveDeepSeekKey(
+  apiKey: string
+): Promise<ApiResponse<DeepSeekKeyStatus>> {
+  try {
+    return await client.put("/api/user/deepseek-key", { apiKey });
+  } catch (error: any) {
+    return {
+      success: false,
+      message: error?.message || "保存失败，请稍后重试",
+      code: error?.code,
+    };
+  }
+}
+
+/**
+ * 删除（清空）DeepSeek API Key
+ *
+ * DELETE /api/user/deepseek-key（需 JWT 认证）
+ */
+export async function deleteDeepSeekKey(): Promise<ApiResponse<null>> {
+  try {
+    return await client.delete("/api/user/deepseek-key");
+  } catch (error: any) {
+    return {
+      success: false,
+      message: error?.message || "删除失败，请稍后重试",
+      code: error?.code,
+    };
+  }
+}
+
+/**
+ * 测试 DeepSeek API Key 连通性（不落库）
+ *
+ * POST /api/user/deepseek-key/test（需 JWT 认证）
+ */
+export async function testDeepSeekKey(
+  apiKey: string
+): Promise<ApiResponse<DeepSeekKeyTestResult>> {
+  try {
+    return await client.post("/api/user/deepseek-key/test", { apiKey });
+  } catch (error: any) {
+    return {
+      success: false,
+      message: error?.message || "测试失败，请稍后重试",
       code: error?.code,
     };
   }
