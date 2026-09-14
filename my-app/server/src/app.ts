@@ -21,6 +21,7 @@ import cors from "cors";
 import authRouter from "./routes/auth.routes.js";
 import userRouter from "./routes/user.routes.js";
 import resumeRouter from "./routes/resume.routes.js";
+import aiRouter from "./routes/ai.routes.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -135,6 +136,14 @@ app.use("/api/user", userRouter);
  * - POST /api/resume/chat     — 对话式迭代修改
  */
 app.use("/api/resume", resumeRouter);
+
+/**
+ * AI 路由
+ *
+ * 所有 /api/ai/* 路径的请求都交给 aiRouter 处理：
+ * - POST /api/ai/resume/analyze — AI 流式分析简历（需认证，SSE 逐 token 返回）
+ */
+app.use("/api/ai", aiRouter);
 
 // ============================================================
 // 全局错误处理
