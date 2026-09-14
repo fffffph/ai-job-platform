@@ -9,6 +9,7 @@
  * - buildResumeGraph     ：简历分析图构建器
  * - collectTrace 等      ：trace 收集 API
  * - createSSEWriter 等   ：SSE 流式通道封装
+ * P2 新增：结构化输出 schema、分层 prompt、结构化节点。
  *
  * 【约定】
  * 业务侧不直接 import 深层路径（如 ../ai/llm/deepseek.js），
@@ -21,6 +22,31 @@ export { createDeepSeekChat } from "./llm/deepseek.js";
 // 简历分析图
 export { buildResumeGraph } from "./graphs/resume/graph.js";
 export type { ResumeState } from "./graphs/resume/state.js";
+
+// 简历分析图节点（结构化）
+export {
+  parseNode,
+  createAnalyzeNode,
+  createMatchNode,
+  suggestNode,
+} from "./graphs/resume/nodes.js";
+
+// 结构化输出 Schema
+export { ResumeAnalysisSchema } from "./prompts/schemas/resume-analysis.js";
+export type { ResumeAnalysis } from "./prompts/schemas/resume-analysis.js";
+export { MatchResultSchema } from "./prompts/schemas/match-result.js";
+export type { MatchResult } from "./prompts/schemas/match-result.js";
+
+// 分层 Prompt
+export { RESUME_EXPERT_SYSTEM_PROMPT } from "./prompts/system/resume-expert.js";
+export {
+  ANALYZE_TASK_PROMPT,
+  buildAnalyzeMessage,
+} from "./prompts/tasks/resume/analyze.js";
+export {
+  MATCH_TASK_PROMPT,
+  buildMatchMessage,
+} from "./prompts/tasks/resume/match.js";
 
 // Trace 骨架
 export { collectTrace, getTrace, clearTrace } from "./trace/tracer.js";
