@@ -10,6 +10,7 @@
  * - collectTrace 等      ：trace 收集 API
  * - createSSEWriter 等   ：SSE 流式通道封装
  * P2 新增：结构化输出 schema、分层 prompt、结构化节点。
+ * P3 新增：Embedding 适配、RAG 离线写入/在线查询、RAG 问答图。
  *
  * 【约定】
  * 业务侧不直接 import 深层路径（如 ../ai/llm/deepseek.js），
@@ -55,3 +56,19 @@ export type { TraceEvent } from "./trace/tracer.js";
 // SSE 流式通道
 export { createSSEWriter } from "./stream/sse.js";
 export type { SSEWriter, SSEMessage } from "./stream/sse.js";
+
+// 【P3 新增】Embedding 适配层（SiliconFlow / bge-m3）
+export { embedText, embedTexts } from "./llm/embedding.js";
+
+// 【P3 新增】RAG 离线写入（分块 + 向量化 + 入库）
+export { chunkText, CHUNK_SIZE, CHUNK_OVERLAP } from "./rag/ingestion/chunker.js";
+export { ingestDocument } from "./rag/ingestion/indexer.js";
+export type { IngestResult } from "./rag/ingestion/indexer.js";
+
+// 【P3 新增】RAG 在线查询（向量检索）
+export { retrieveChunks, DEFAULT_TOP_K } from "./rag/retrieval/retriever.js";
+export type { RetrievedChunk } from "./rag/retrieval/retriever.js";
+
+// 【P3 新增】RAG 问答图
+export { buildRagGraph } from "./graphs/rag/graph.js";
+export type { RAGState } from "./graphs/rag/state.js";

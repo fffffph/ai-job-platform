@@ -75,3 +75,38 @@ model User {
 
   @@map("users")
 }
+
+// 【P3 新增】============================================
+// Document 模型 —— 知识库文档
+// ============================================
+/// 知识库文档（用户上传的面试题/JD/笔记等）
+model Document {
+  id        String   @id @default(uuid()) @map("id")
+  userId    String   @map("user_id")
+  title     String   @map("title")
+  content   String   @map("content")          // 原始全文（保留，供溯源）
+  createdAt DateTime @default(now()) @map("created_at")
+
+  chunks    Chunk[]
+
+  @@index([userId])
+  @@map("documents")
+}
+
+// 【P3 新增】============================================
+// Chunk 模型 —— 文档分块（含向量）
+// ============================================
+/// 文档分块（含向量）
+model Chunk {
+  id          String   @id @default(uuid()) @map("id")
+  documentId  String   @map("document_id")
+  chunkIndex  Int      @map("chunk_index")     // 分块序号，用于溯源定位
+  content     String   @map("content")          // 分块文本
+  embedding   Unsupported("vector(1024)")?      // 1024 维向量（bge-m3）
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  document    Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+  @@map("chunks")
+}

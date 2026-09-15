@@ -14,7 +14,8 @@
     "db:migrate": "prisma migrate dev --name init",
     "db:push": "prisma db push",
     "db:studio": "prisma studio",
-    "db:seed": "tsx prisma/seed.ts"
+    "db:seed": "tsx prisma/seed.ts",
+    "mcp:dev": "tsx watch src/ai/tools/mcp/knowledge-server.ts"
   },
   "keywords": [],
   "author": "",
@@ -26,6 +27,7 @@
     "@langchain/core": "^1.2.8",
     "@langchain/langgraph": "^1.4.8",
     "@langchain/openai": "^1.5.8",
+    "@modelcontextprotocol/sdk": "^1.12.0",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
     "bcrypt": "^6.0.0",
