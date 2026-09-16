@@ -269,7 +269,10 @@ async function analyzeResume(req: Request, res: Response): Promise<void> {
  * 无需用户级 DeepSeek Key（embedding 用服务端级 SiliconFlow Key）。
  *
  * 请求体：{ "title": "文档标题", "content": "文档全文" }
- * 响应体：{ "success": true, "documentId": "...", "chunkCount": 3 }
+ * 响应体：{ "success": true, "message": "...", "data": { "documentId": "...", "chunkCount": 3 } }
+ * 【修复】documentId/chunkCount 统一包装进 data 字段，与其他接口的
+ * { success, message, data } 响应格式保持一致（此前放在顶层导致前端
+ * res.data 为 undefined，读取 chunkCount 报 TypeError）
  */
 async function uploadKnowledge(req: Request, res: Response): Promise<void> {
   // ---------- 参数校验 ----------
@@ -308,11 +311,11 @@ async function uploadKnowledge(req: Request, res: Response): Promise<void> {
   // ---------- 入库（分块 + 向量化 + 写 pgvector） ----------
   try {
     const result = await ingestDocument(userId, title, content);
+    // 【修复】统一包装进 data 字段，与 ApiResponse<UploadResult> 类型约定一致
     res.json({
       success: true,
       message: "文档入库成功",
-      documentId: result.documentId,
-      chunkCount: result.chunkCount,
+      data: result,
     });
   } catch (error) {
     const message = (error as Error).message || "文档入库失败";

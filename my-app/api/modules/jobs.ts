@@ -16,7 +16,7 @@
 
 import client, { getToken } from "../client";
 import { readSSEStream, type SSEEvent } from "../sse";
-import type { ApiResponse, JobProfile } from "../types";
+import type { ApiResponse, JobProfile, TraceEvent } from "../types";
 
 /** 后端 API 基础地址（与 api/client.ts 的 baseURL 逻辑保持一致） */
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
@@ -39,6 +39,8 @@ export interface JobRecommendHandlers {
   onAgentAction?: (action: "call_tools" | "answer", message: string) => void;
   /** 工具执行完成（已获取一批职位数据） */
   onToolsDone?: () => void;
+  /** 节点级 trace 事件（P6 可观测，供 AI Trace 面板展示决策过程） */
+  onTrace?: (events: TraceEvent[]) => void;
   /** 整个过程结束，返回最终推荐文本 */
   onDone?: (answer: string) => void;
   /** 出错 */
@@ -137,6 +139,11 @@ function dispatchJobsEvent(
 
     case "done":
       handlers.onDone?.((payload.answer as string) ?? "");
+      break;
+
+    case "trace":
+      // 【P6 新增】节点级 trace 事件，供 AI Trace 面板展示决策过程
+      handlers.onTrace?.((payload.events as TraceEvent[]) ?? []);
       break;
 
     case "error":

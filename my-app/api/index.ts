@@ -50,6 +50,7 @@ export type {
   RetrievedChunk,
   UploadResult,
   JobProfile,
+  TraceEvent,
 } from "./types";
 
 // 枚举和常量导出

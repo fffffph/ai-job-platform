@@ -27,6 +27,8 @@ import {
 } from "@ant-design/icons";
 import { motion } from "framer-motion";
 import { recommendJobsStream, getJobProfileApi } from "@/api";
+import type { TraceEvent } from "@/api";
+import AITracePanel from "@/components/AITracePanel";
 
 const JobsPage: React.FC = () => {
   // ========== 求职意向表单状态 ==========
@@ -41,6 +43,7 @@ const JobsPage: React.FC = () => {
   const [answer, setAnswer] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [remembered, setRemembered] = useState(false);
+  const [traceEvents, setTraceEvents] = useState<TraceEvent[]>([]);
 
   // 【P5】加载时读取已保存的求职画像，回填表单（跨轮记忆）
   useEffect(() => {
@@ -64,6 +67,7 @@ const JobsPage: React.FC = () => {
     setError(null);
     setAnswer("");
     setRemembered(false);
+    setTraceEvents([]);
     setPhase("正在启动职位发现 Agent…");
     setSearchRounds(0);
 
@@ -84,6 +88,10 @@ const JobsPage: React.FC = () => {
           }
         },
         onToolsDone: () => setPhase("已获取职位数据，Agent 继续分析…"),
+        onTrace: (events) => {
+          // 【P6】接收节点级 trace，供 AI Trace 面板展示决策过程
+          setTraceEvents(events);
+        },
         onDone: (finalAnswer) => {
           setAnswer(finalAnswer);
           setPhase("");
@@ -199,6 +207,9 @@ const JobsPage: React.FC = () => {
           </div>
         </Card>
       )}
+
+      {/* AI 决策过程（P6 可观测） */}
+      {traceEvents.length > 0 && <AITracePanel events={traceEvents} />}
 
       {/* 推荐结果 */}
       {answer && (

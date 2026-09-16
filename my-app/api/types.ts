@@ -159,6 +159,22 @@ export interface JobProfile {
   expectedSalary: string;
 }
 
+// ========== AI Trace 类型（P6 可观测） ==========
+
+/** 单个 AI 节点的执行追踪记录 */
+export interface TraceEvent {
+  /** 节点名称，如 agent / tools / analyze / retrieve */
+  nodeName: string;
+  /** 节点输入（原始数据，供详情面板展开查看） */
+  input: unknown;
+  /** 节点输出（原始数据） */
+  output: unknown;
+  /** 节点耗时（毫秒） */
+  durationMs: number;
+  /** 事件发生时间（ISO 8601 字符串） */
+  timestamp: string;
+}
+
 /** 错误码对应的用户提示文案 */
 export const ERROR_MESSAGES: Record<string, string> = {
   [ErrorCode.EMAIL_EXISTS]: "该邮箱已被注册，请使用其他邮箱或直接登录",

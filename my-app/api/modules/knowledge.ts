@@ -21,7 +21,7 @@
 
 import client, { getToken } from "../client";
 import { readSSEStream, type SSEEvent } from "../sse";
-import type { ApiResponse, RetrievedChunk, UploadResult } from "../types";
+import type { ApiResponse, RetrievedChunk, UploadResult, TraceEvent } from "../types";
 
 /** 后端 API 基础地址（与 api/client.ts 的 baseURL 逻辑保持一致） */
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
@@ -67,6 +67,8 @@ export interface KnowledgeAskHandlers {
   onRetrieve?: (chunks: RetrievedChunk[]) => void;
   /** 回答生成完成，返回带引用的回答文本（node: generate） */
   onAnswer?: (answer: string) => void;
+  /** 节点级 trace 事件（P6 可观测，供 AI Trace 面板展示检索/生成过程） */
+  onTrace?: (events: TraceEvent[]) => void;
   /** 整个过程结束（done 事件，含完整 answer + chunks） */
   onDone?: (result: { answer: string; chunks: RetrievedChunk[] }) => void;
   /** 出错（error 事件或网络异常） */
@@ -176,8 +178,13 @@ function dispatchKnowledgeEvent(
       handlers.onError?.((payload.message as string) ?? "知识库问答失败");
       break;
 
+    case "trace":
+      // 【P6 新增】节点级 trace 事件，供 AI Trace 面板展示检索/生成过程
+      handlers.onTrace?.((payload.events as TraceEvent[]) ?? []);
+      break;
+
     default:
-      // trace / 其他事件暂不处理
+      // 其他事件暂不处理
       break;
   }
 }

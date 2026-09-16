@@ -40,7 +40,8 @@ import {
   BulbOutlined,
 } from "@ant-design/icons";
 import { uploadKnowledgeApi, askKnowledgeStream } from "@/api";
-import type { RetrievedChunk } from "@/api";
+import type { RetrievedChunk, TraceEvent } from "@/api";
+import AITracePanel from "@/components/AITracePanel";
 
 const { TextArea } = Input;
 const { Paragraph, Text } = Typography;
@@ -64,6 +65,7 @@ const KnowledgeBasePanel: React.FC = () => {
   const [chunks, setChunks] = useState<RetrievedChunk[]>([]);
   const [answer, setAnswer] = useState("");
   const [askError, setAskError] = useState<string | null>(null);
+  const [traceEvents, setTraceEvents] = useState<TraceEvent[]>([]);
 
   /**
    * 上传文档到知识库。
@@ -86,7 +88,8 @@ const KnowledgeBasePanel: React.FC = () => {
     if (res.success) {
       setUploadNotice({
         type: "success",
-        text: `文档已入库，自动切分为 ${res.data.chunkCount} 个片段，可开始提问`,
+        // 防御性可选链：即使后端返回格式异常也不至于白屏
+        text: `文档已入库，自动切分为 ${res.data?.chunkCount ?? 0} 个片段，可开始提问`,
       });
       setTitle("");
       setContent("");
@@ -110,6 +113,7 @@ const KnowledgeBasePanel: React.FC = () => {
     setAskError(null);
     setChunks([]);
     setAnswer("");
+    setTraceEvents([]);
 
     await askKnowledgeStream(question.trim(), {
       onStart: () => {
@@ -120,6 +124,10 @@ const KnowledgeBasePanel: React.FC = () => {
       },
       onAnswer: (generated) => {
         setAnswer(generated);
+      },
+      onTrace: (events) => {
+        // 【P6】接收节点级 trace，供 AI Trace 面板展示检索/生成过程
+        setTraceEvents(events);
       },
       onDone: (result) => {
         setChunks(result.chunks);
@@ -260,6 +268,9 @@ const KnowledgeBasePanel: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* AI 决策过程（P6 可观测） */}
+      {traceEvents.length > 0 && <AITracePanel events={traceEvents} />}
 
       {!asking && !answer && chunks.length === 0 && !askError && (
         <Empty
