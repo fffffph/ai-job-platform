@@ -36,6 +36,11 @@
 
 import { Router, type IRouter } from "express";
 import type { Request, Response } from "express";
+import {
+  SystemMessage,
+  HumanMessage,
+  AIMessage,
+} from "@langchain/core/messages";
 import { authMiddleware } from "../middleware/auth.js";
 import { getDecryptedKey } from "../services/deepseekKey.service.js";
 import {
@@ -46,6 +51,9 @@ import {
   // 【P3 新增】RAG 相关能力
   ingestDocument,
   buildRagGraph,
+  // 【P4 新增】职位发现 Agent 相关能力
+  buildJobsGraph,
+  JOB_AGENT_SYSTEM_PROMPT,
 } from "../ai/index.js";
 import type {
   ResumeState,
@@ -54,6 +62,8 @@ import type {
   // 【P3 新增】RAG 状态与检索结果类型
   RAGState,
   RetrievedChunk,
+  // 【P4 新增】职位发现状态类型
+  JobsState,
 } from "../ai/index.js";
 
 /** 路由实例 */
@@ -89,6 +99,9 @@ aiRouter.post("/knowledge/upload", authMiddleware, uploadKnowledge);
 
 // 【P3 新增】POST /api/ai/knowledge/ask — 知识库问答（需认证，SSE 返回）
 aiRouter.post("/knowledge/ask", authMiddleware, askKnowledge);
+
+// 【P4 新增】POST /api/ai/jobs/recommend — 职位发现 Agent 推荐（需认证，SSE 返回）
+aiRouter.post("/jobs/recommend", authMiddleware, recommendJobs);
 
 /**
  * 简历结构化分析处理器。
@@ -430,6 +443,155 @@ async function askKnowledge(req: Request, res: Response): Promise<void> {
   } catch (error) {
     const message = (error as Error).message || "知识库问答失败";
     console.error("[AI] 知识库问答失败:", message);
+    sse.send("error", { success: false, message });
+  } finally {
+    // 无论成功失败都关闭 SSE 流，避免连接挂起
+    sse.close();
+  }
+}
+
+/**
+ * 【P4 新增】POST /api/ai/jobs/recommend
+ *
+ * 职位发现 Agent 推荐：LLM 自主规划搜索策略，ReAct 循环调用 search_jobs
+ * 工具探索职位库，最终输出带理由的个性化职位推荐，通过 SSE 返回。
+ *
+ * 请求体：{ "city"?: "西安", "skills"?: "React,TypeScript", "expectedSalary"?: "12k-18k" }
+ *
+ * SSE 事件流（P4）：
+ *   meta  → 开始执行
+ *   node  → agent 决策完成（含本轮是「调用工具」还是「给出回答」）
+ *   node  → tools 工具执行完成
+ *   trace → 节点级 trace 事件（完整还原 Agent 决策过程）
+ *   done  → 完成（含 answer 最终推荐文本）
+ *   error → 出错
+ */
+async function recommendJobs(req: Request, res: Response): Promise<void> {
+  // ---------- 阶段 1：读取当前用户 ----------
+  const userId = (req as { user?: { id?: string } }).user?.id ?? "";
+  if (!userId) {
+    res.status(401).json({
+      success: false,
+      message: "未登录，请先登录",
+      code: "UNAUTHORIZED",
+    });
+    return;
+  }
+
+  // ---------- 阶段 1：读取用户级 DeepSeek Key ----------
+  let apiKey = "";
+  try {
+    apiKey = await getDecryptedKey(userId);
+  } catch (error) {
+    console.error("[AI] 读取 API Key 失败:", (error as Error).message);
+    res.status(500).json({
+      success: false,
+      message: "读取 API Key 失败，请稍后重试",
+      code: "KEY_READ_FAILED",
+    });
+    return;
+  }
+
+  if (!apiKey) {
+    res.status(403).json({
+      success: false,
+      message: "需先在个人中心配置 DeepSeek API Key 才能使用职位推荐",
+      code: "DEEPSEEK_KEY_NOT_CONFIGURED",
+    });
+    return;
+  }
+
+  // ---------- 阶段 1：解析求职意向 ----------
+  const body = (req.body ?? {}) as {
+    city?: unknown;
+    skills?: unknown;
+    expectedSalary?: unknown;
+  };
+  const city = typeof body.city === "string" ? body.city.trim() : "";
+  const skills = typeof body.skills === "string" ? body.skills.trim() : "";
+  const expectedSalary =
+    typeof body.expectedSalary === "string" ? body.expectedSalary.trim() : "";
+
+  // ---------- 阶段 2：进入 SSE 流式通道 ----------
+  const sse = createSSEWriter(res);
+  clearTrace();
+
+  try {
+    // 组装求职意向描述（作为 HumanMessage 注入 Agent 上下文）
+    const intentParts: string[] = [];
+    if (skills) intentParts.push(`技能栈：${skills}`);
+    if (city) intentParts.push(`期望城市：${city}`);
+    if (expectedSalary) intentParts.push(`期望薪资：${expectedSalary}`);
+    const intent =
+      intentParts.length > 0
+        ? `我的求职意向如下：\n${intentParts.join("\n")}\n\n请帮我搜索并推荐匹配的职位。`
+        : "请帮我搜索并推荐合适的前端开发职位。";
+
+    // 初始消息流：系统 Prompt + 用户求职意向
+    const initialState: JobsState = {
+      messages: [
+        new SystemMessage(JOB_AGENT_SYSTEM_PROMPT),
+        new HumanMessage(intent),
+      ],
+    };
+
+    // 通知客户端开始执行
+    sse.send("meta", { type: "start", message: "开始职位发现" });
+
+    // 根据当前用户 Key 构建 ReAct 图（按请求构建，保证 Key 隔离）
+    const graph = buildJobsGraph(apiKey);
+
+    // ReAct 循环为非流式（需完整 AIMessage 判断 tool_calls），用 updates 模式
+    const stream = await graph.stream(initialState, {
+      streamMode: "updates",
+    });
+
+    let finalAnswer = "";
+
+    for await (const updates of stream) {
+      const updateMap = updates as Record<string, Partial<JobsState>>;
+
+      for (const [nodeName, update] of Object.entries(updateMap)) {
+        if (nodeName === "agent") {
+          // agent 节点：推送本轮决策结果（调用工具 / 给出回答）
+          const newMessages = update.messages ?? [];
+          const lastMsg = newMessages[newMessages.length - 1] as
+            | AIMessage
+            | undefined;
+          const hasToolCalls =
+            lastMsg instanceof AIMessage && (lastMsg.tool_calls?.length ?? 0) > 0;
+
+          sse.send("node", {
+            nodeName: "agent",
+            done: true,
+            message: hasToolCalls ? "Agent 正在搜索职位…" : "Agent 已完成推荐",
+            action: hasToolCalls ? "call_tools" : "answer",
+          });
+
+          if (!hasToolCalls && lastMsg) {
+            finalAnswer =
+              typeof lastMsg.content === "string" ? lastMsg.content : "";
+          }
+        } else if (nodeName === "tools") {
+          sse.send("node", {
+            nodeName: "tools",
+            done: true,
+            message: "已获取职位数据",
+          });
+        }
+      }
+    }
+
+    // 附带节点级 trace 事件 + 完成事件（含最终推荐）
+    sse.send("trace", { events: getTrace() });
+    sse.send("done", {
+      success: true,
+      message: "职位推荐完成",
+      answer: finalAnswer,
+    });
+  } catch (error) {
+    const message = (error as Error).message || "职位推荐失败";
+    console.error("[AI] 职位推荐失败:", message);
     sse.send("error", { success: false, message });
   } finally {
     // 无论成功失败都关闭 SSE 流，避免连接挂起

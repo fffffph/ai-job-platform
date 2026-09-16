@@ -23,6 +23,10 @@ export {
 export { uploadKnowledgeApi, askKnowledgeStream } from "./modules/knowledge";
 export type { KnowledgeAskHandlers } from "./modules/knowledge";
 
+// 职位发现模块（ReAct Agent）
+export { recommendJobsStream } from "./modules/jobs";
+export type { JobIntent, JobRecommendHandlers } from "./modules/jobs";
+
 // Token 工具函数
 export { getToken, setToken, removeToken } from "./client";
 

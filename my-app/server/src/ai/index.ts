@@ -72,3 +72,15 @@ export type { RetrievedChunk } from "./rag/retrieval/retriever.js";
 // 【P3 新增】RAG 问答图
 export { buildRagGraph } from "./graphs/rag/graph.js";
 export type { RAGState } from "./graphs/rag/state.js";
+
+// 【P4 新增】职位发现 ReAct 图
+export { buildJobsGraph } from "./graphs/jobs/graph.js";
+export type { JobsState } from "./graphs/jobs/state.js";
+
+// 【P4 新增】职位搜索工具（Function Calling）
+export { searchJobsTool } from "./tools/function-calling/search-jobs.js";
+export { searchJobs, MOCK_JOBS } from "./tools/function-calling/job-data.js";
+export type { JobPosting } from "./tools/function-calling/job-data.js";
+
+// 【P4 新增】职位发现 Agent 系统 Prompt
+export { JOB_AGENT_SYSTEM_PROMPT } from "./prompts/system/job-agent.js";
