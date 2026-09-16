@@ -54,6 +54,9 @@ import {
   // 【P4 新增】职位发现 Agent 相关能力
   buildJobsGraph,
   JOB_AGENT_SYSTEM_PROMPT,
+  // 【P5 新增】用户求职画像（Memory 层）
+  getJobProfile,
+  saveJobProfile,
 } from "../ai/index.js";
 import type {
   ResumeState,
@@ -64,6 +67,8 @@ import type {
   RetrievedChunk,
   // 【P4 新增】职位发现状态类型
   JobsState,
+  // 【P5 新增】用户求职画像类型
+  JobProfile,
 } from "../ai/index.js";
 
 /** 路由实例 */
@@ -102,6 +107,12 @@ aiRouter.post("/knowledge/ask", authMiddleware, askKnowledge);
 
 // 【P4 新增】POST /api/ai/jobs/recommend — 职位发现 Agent 推荐（需认证，SSE 返回）
 aiRouter.post("/jobs/recommend", authMiddleware, recommendJobs);
+
+// 【P5 新增】GET /api/ai/profile — 读取用户求职画像（需认证，JSON 返回）
+aiRouter.get("/profile", authMiddleware, getProfile);
+
+// 【P5 新增】PUT /api/ai/profile — 保存用户求职画像（需认证，JSON 返回）
+aiRouter.put("/profile", authMiddleware, saveProfile);
 
 /**
  * 简历结构化分析处理器。
@@ -507,10 +518,23 @@ async function recommendJobs(req: Request, res: Response): Promise<void> {
     skills?: unknown;
     expectedSalary?: unknown;
   };
-  const city = typeof body.city === "string" ? body.city.trim() : "";
-  const skills = typeof body.skills === "string" ? body.skills.trim() : "";
-  const expectedSalary =
+  let city = typeof body.city === "string" ? body.city.trim() : "";
+  let skills = typeof body.skills === "string" ? body.skills.trim() : "";
+  let expectedSalary =
     typeof body.expectedSalary === "string" ? body.expectedSalary.trim() : "";
+
+  // 【P5 新增】画像兜底：请求未传的字段，用已保存的求职画像补充（跨轮记忆）
+  try {
+    const profile = await getJobProfile(userId);
+    if (profile) {
+      if (!city) city = profile.city;
+      if (!skills) skills = profile.skills;
+      if (!expectedSalary) expectedSalary = profile.expectedSalary;
+    }
+  } catch (error) {
+    // 画像读取失败不影响推荐主流程，仅告警
+    console.warn("[AI] 读取求职画像失败:", (error as Error).message);
+  }
 
   // ---------- 阶段 2：进入 SSE 流式通道 ----------
   const sse = createSSEWriter(res);
@@ -589,6 +613,16 @@ async function recommendJobs(req: Request, res: Response): Promise<void> {
       message: "职位推荐完成",
       answer: finalAnswer,
     });
+
+    // 【P5 新增】推荐结束后自动保存求职画像（跨轮记忆更新）
+    // 仅在用户本次提供了至少一个字段时写入；失败静默降级，不影响已成功的推荐
+    if (city || skills || expectedSalary) {
+      try {
+        await saveJobProfile(userId, { city, skills, expectedSalary });
+      } catch (error) {
+        console.warn("[AI] 保存求职画像失败:", (error as Error).message);
+      }
+    }
   } catch (error) {
     const message = (error as Error).message || "职位推荐失败";
     console.error("[AI] 职位推荐失败:", message);
@@ -596,6 +630,72 @@ async function recommendJobs(req: Request, res: Response): Promise<void> {
   } finally {
     // 无论成功失败都关闭 SSE 流，避免连接挂起
     sse.close();
+  }
+}
+
+/**
+ * 【P5 新增】GET /api/ai/profile
+ *
+ * 读取当前用户的求职画像（结构化记忆）。
+ *
+ * 响应体：{ "success": true, "data": { "jobTitle","city","skills","expectedSalary" } }
+ * 未设置过画像时 data 为 null。
+ */
+async function getProfile(req: Request, res: Response): Promise<void> {
+  const userId = (req as { user?: { id?: string } }).user?.id ?? "";
+  if (!userId) {
+    res.status(401).json({ success: false, message: "未登录", code: "UNAUTHORIZED" });
+    return;
+  }
+
+  try {
+    const profile = await getJobProfile(userId);
+    res.json({ success: true, data: profile });
+  } catch (error) {
+    const message = (error as Error).message || "读取求职画像失败";
+    console.error("[AI] 读取求职画像失败:", message);
+    res.status(500).json({ success: false, message, code: "PROFILE_READ_FAILED" });
+  }
+}
+
+/**
+ * 【P5 新增】PUT /api/ai/profile
+ *
+ * 保存当前用户的求职画像（合并更新：只更新传入的非空字段）。
+ *
+ * 请求体：{ "jobTitle"?, "city"?, "skills"?, "expectedSalary"? }
+ * 响应体：{ "success": true, "data": 保存后的完整画像 }
+ */
+async function saveProfile(req: Request, res: Response): Promise<void> {
+  const userId = (req as { user?: { id?: string } }).user?.id ?? "";
+  if (!userId) {
+    res.status(401).json({ success: false, message: "未登录", code: "UNAUTHORIZED" });
+    return;
+  }
+
+  const body = (req.body ?? {}) as {
+    jobTitle?: unknown;
+    city?: unknown;
+    skills?: unknown;
+    expectedSalary?: unknown;
+  };
+
+  // 仅取字符串字段，非字符串/空值忽略（合并更新语义）
+  const profile: Partial<JobProfile> = {};
+  if (typeof body.jobTitle === "string") profile.jobTitle = body.jobTitle.trim();
+  if (typeof body.city === "string") profile.city = body.city.trim();
+  if (typeof body.skills === "string") profile.skills = body.skills.trim();
+  if (typeof body.expectedSalary === "string") {
+    profile.expectedSalary = body.expectedSalary.trim();
+  }
+
+  try {
+    const saved = await saveJobProfile(userId, profile);
+    res.json({ success: true, message: "求职画像已保存", data: saved });
+  } catch (error) {
+    const message = (error as Error).message || "保存求职画像失败";
+    console.error("[AI] 保存求职画像失败:", message);
+    res.status(500).json({ success: false, message, code: "PROFILE_SAVE_FAILED" });
   }
 }
 

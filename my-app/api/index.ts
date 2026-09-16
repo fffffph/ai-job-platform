@@ -27,6 +27,9 @@ export type { KnowledgeAskHandlers } from "./modules/knowledge";
 export { recommendJobsStream } from "./modules/jobs";
 export type { JobIntent, JobRecommendHandlers } from "./modules/jobs";
 
+// 求职画像模块（P5 Memory）
+export { getJobProfileApi, saveJobProfileApi } from "./modules/jobs";
+
 // Token 工具函数
 export { getToken, setToken, removeToken } from "./client";
 
@@ -46,6 +49,7 @@ export type {
   RegisterParams,
   RetrievedChunk,
   UploadResult,
+  JobProfile,
 } from "./types";
 
 // 枚举和常量导出

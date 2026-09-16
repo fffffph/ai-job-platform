@@ -145,6 +145,20 @@ export interface UploadResult {
   chunkCount: number;
 }
 
+// ========== 求职画像类型（P5 Memory） ==========
+
+/** 用户求职画像（结构化记忆，供职位推荐个性化） */
+export interface JobProfile {
+  /** 求职方向/岗位 */
+  jobTitle: string;
+  /** 期望城市 */
+  city: string;
+  /** 技能栈 */
+  skills: string;
+  /** 期望薪资 */
+  expectedSalary: string;
+}
+
 /** 错误码对应的用户提示文案 */
 export const ERROR_MESSAGES: Record<string, string> = {
   [ErrorCode.EMAIL_EXISTS]: "该邮箱已被注册，请使用其他邮箱或直接登录",

@@ -73,7 +73,42 @@ model User {
   /** DeepSeek API Key 最后配置/更新时间 */
   deepseekKeyUpdatedAt DateTime? @map("deepseek_key_updated_at")
 
+  // 【P5 新增】用户求职画像（1:1，用于职位推荐的个性化记忆）
+  profile UserProfile?
+
   @@map("users")
+}
+
+// 【P5 新增】============================================
+// UserProfile 模型 —— 用户求职画像
+// ============================================
+/**
+ * 用户求职画像（Memory 层的结构化记忆）
+ *
+ * 存储用户的求职偏好，供职位发现 Agent 做个性化推荐时读取，
+ * 实现「跨轮记忆」——用户首次填写求职意向后，下次无需重复输入。
+ *
+ * 【字段说明】
+ * - city           : 期望城市（如 "西安"）
+ * - skills         : 技能栈（如 "React,TypeScript,微前端,Node.js"）
+ * - expectedSalary : 期望薪资（如 "12k-18k"）
+ * - jobTitle       : 求职方向/岗位（如 "前端开发工程师"）
+ *
+ * 【1:1 关系】
+ * 每个用户至多一条画像记录，userId 唯一索引保证。
+ */
+model UserProfile {
+  id             String   @id @default(uuid()) @map("id")
+  userId         String   @unique @map("user_id")
+  jobTitle       String?  @map("job_title")
+  city           String?  @map("city")
+  skills         String?  @map("skills")
+  expectedSalary String?  @map("expected_salary")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_profiles")
 }
 
 // 【P3 新增】============================================

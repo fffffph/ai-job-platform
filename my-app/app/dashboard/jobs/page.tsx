@@ -16,7 +16,7 @@
  * 让用户看到 Agent 的自主规划过程，而非黑盒等待。
  */
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Card, Input, Button, Space, Alert, Spin, Empty, Tag } from "antd";
 import {
   SearchOutlined,
@@ -26,7 +26,7 @@ import {
   DollarOutlined,
 } from "@ant-design/icons";
 import { motion } from "framer-motion";
-import { recommendJobsStream } from "@/api";
+import { recommendJobsStream, getJobProfileApi } from "@/api";
 
 const JobsPage: React.FC = () => {
   // ========== 求职意向表单状态 ==========
@@ -40,6 +40,18 @@ const JobsPage: React.FC = () => {
   const [searchRounds, setSearchRounds] = useState(0);
   const [answer, setAnswer] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [remembered, setRemembered] = useState(false);
+
+  // 【P5】加载时读取已保存的求职画像，回填表单（跨轮记忆）
+  useEffect(() => {
+    getJobProfileApi().then((res) => {
+      if (res.success && res.data) {
+        if (res.data.city) setCity(res.data.city);
+        if (res.data.skills) setSkills(res.data.skills);
+        if (res.data.expectedSalary) setExpectedSalary(res.data.expectedSalary);
+      }
+    });
+  }, []);
 
   /**
    * 发起职位推荐。
@@ -51,6 +63,7 @@ const JobsPage: React.FC = () => {
     setLoading(true);
     setError(null);
     setAnswer("");
+    setRemembered(false);
     setPhase("正在启动职位发现 Agent…");
     setSearchRounds(0);
 
@@ -74,6 +87,8 @@ const JobsPage: React.FC = () => {
         onDone: (finalAnswer) => {
           setAnswer(finalAnswer);
           setPhase("");
+          // 【P5】推荐成功 → 画像已由后端自动保存，提示用户已记住偏好
+          setRemembered(true);
         },
         onError: (message) => {
           setError(message);
@@ -192,6 +207,14 @@ const JobsPage: React.FC = () => {
           style={{ borderRadius: 12 }}
           styles={{ body: { padding: "16px 20px" } }}
         >
+          {remembered && (
+            <Alert
+              type="success"
+              showIcon
+              message="已记住你的求职偏好，下次推荐将自动沿用"
+              style={{ marginBottom: 16 }}
+            />
+          )}
           <div
             style={{
               whiteSpace: "pre-wrap",

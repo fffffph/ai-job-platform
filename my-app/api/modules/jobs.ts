@@ -14,8 +14,9 @@
  * 让用户看到搜索过程而非干等。
  */
 
-import { getToken } from "../client";
+import client, { getToken } from "../client";
 import { readSSEStream, type SSEEvent } from "../sse";
+import type { ApiResponse, JobProfile } from "../types";
 
 /** 后端 API 基础地址（与 api/client.ts 的 baseURL 逻辑保持一致） */
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
@@ -144,5 +145,53 @@ function dispatchJobsEvent(
 
     default:
       break;
+  }
+}
+
+// ============================================================
+// 求职画像 API（P5 Memory）
+// ============================================================
+
+/**
+ * 读取当前用户的求职画像。
+ *
+ * GET /api/ai/profile（需 JWT 认证）
+ *
+ * @returns 画像对象；未设置过时为 null
+ */
+export async function getJobProfileApi(): Promise<
+  ApiResponse<JobProfile | null>
+> {
+  try {
+    return await client.get("/api/ai/profile");
+  } catch (error: unknown) {
+    const err = error as { message?: string; code?: string };
+    return {
+      success: false,
+      message: err?.message || "读取求职画像失败",
+      code: err?.code,
+    };
+  }
+}
+
+/**
+ * 保存当前用户的求职画像（合并更新）。
+ *
+ * PUT /api/ai/profile（需 JWT 认证）
+ *
+ * @param profile - 要保存的画像字段（可只传部分字段）
+ */
+export async function saveJobProfileApi(
+  profile: Partial<JobProfile>
+): Promise<ApiResponse<JobProfile>> {
+  try {
+    return await client.put("/api/ai/profile", profile);
+  } catch (error: unknown) {
+    const err = error as { message?: string; code?: string };
+    return {
+      success: false,
+      message: err?.message || "保存求职画像失败",
+      code: err?.code,
+    };
   }
 }
