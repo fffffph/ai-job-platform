@@ -123,6 +123,28 @@ export enum ErrorCode {
   INVALID_KEY_FORMAT = "INVALID_KEY_FORMAT",
 }
 
+// ========== 个人知识库（RAG）类型 ==========
+
+/** 知识库检索命中的单个文档分块 */
+export interface RetrievedChunk {
+  /** 分块文本内容 */
+  content: string;
+  /** 来源文档标题 */
+  documentTitle: string;
+  /** 分块序号（从 0 开始，用于溯源定位） */
+  chunkIndex: number;
+  /** 相似度分数（1 - 余弦距离，越大越相似，范围约 [-1, 1]） */
+  score: number;
+}
+
+/** 知识库文档入库结果 */
+export interface UploadResult {
+  /** 新文档 ID */
+  documentId: string;
+  /** 分块数量 */
+  chunkCount: number;
+}
+
 /** 错误码对应的用户提示文案 */
 export const ERROR_MESSAGES: Record<string, string> = {
   [ErrorCode.EMAIL_EXISTS]: "该邮箱已被注册，请使用其他邮箱或直接登录",

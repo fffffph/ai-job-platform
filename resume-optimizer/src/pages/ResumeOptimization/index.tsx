@@ -54,8 +54,10 @@ const ResumeOptimizationPage: React.FC = () => {
           <Step1Input
             file={conv.file}
             resumeText={conv.resumeText}
+            jobDescription={conv.jobDescription}
             onUpload={conv.handleFileUpload}
             onTextInput={conv.handleTextInput}
+            onJobInput={conv.handleJobInput}
             onOptimize={() => {
               if (hasResume()) conv.startOptimize();
             }}
@@ -85,6 +87,7 @@ const ResumeOptimizationPage: React.FC = () => {
             score={conv.score}
             tags={conv.tags}
             highlights={conv.highlights}
+            matchResult={conv.matchResult}
             currentResume={conv.currentResume}
             originalResume={conv.versions[0]?.resume || ""}
             versions={conv.versions}

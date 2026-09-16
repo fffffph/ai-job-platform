@@ -19,6 +19,7 @@ import {
   chatResumeApi,
   parseResumeApi,
   getDeepSeekKeyStatusApi,
+  analyzeResumeMatch,
 } from "../api";
 import type {
   OptimizeResult,
@@ -28,6 +29,7 @@ import type {
   ResumeTag,
   ChangeItem,
   SectionContext,
+  MatchResult,
 } from "../api";
 
 // ========== 类型定义 ==========
@@ -47,11 +49,15 @@ interface ConversationState {
   step: Step;
   file: File | null;
   resumeText: string;
+  /** 目标岗位描述 JD（可选，填写后触发岗位匹配度评估） */
+  jobDescription: string;
   wordCount: number;
   score: number;
   tags: ResumeTag[];
   highlights: string[];
   suggestions: ResumeSuggestion[];
+  /** 岗位匹配度结果（null 表示未评估或评估失败，Step3 据此决定是否展示匹配度卡片） */
+  matchResult: MatchResult | null;
   currentResume: string;
   versions: ResumeVersion[];
   currentVersionIndex: number;
@@ -71,11 +77,13 @@ export function useConversation() {
     step: 1,
     file: null,
     resumeText: "",
+    jobDescription: "",
     wordCount: 0,
     score: 0,
     tags: [],
     highlights: [],
     suggestions: [],
+    matchResult: null,
     currentResume: "",
     versions: [],
     currentVersionIndex: -1,
@@ -107,13 +115,18 @@ export function useConversation() {
     }));
   }, []);
 
+  /** 输入目标岗位描述 JD（可选，填写后优化时会额外做匹配度评估） */
+  const handleJobInput = useCallback((jd: string) => {
+    setState((s) => ({ ...s, jobDescription: jd }));
+  }, []);
+
   // ========== 步骤 2：解析 + 首轮优化 ==========
 
   // 跟踪当前请求的 AbortController，用户返回/重试时取消挂起的请求
   const abortRef = useRef<AbortController | null>(null);
 
   const startOptimize = useCallback(async () => {
-    const { file, resumeText } = state;
+    const { file, resumeText, jobDescription } = state;
     if (!file && !resumeText.trim()) return;
 
     // 取消上一次挂起的请求
@@ -159,6 +172,12 @@ export function useConversation() {
         }));
       }
 
+      // 并行：优化简历 + 评估岗位匹配度（仅当填写了 JD 时）
+      // 匹配度是增强能力，失败静默返回 null，不阻断简历优化主流程
+      const matchPromise = jobDescription.trim()
+        ? analyzeResumeMatch(textToOptimize, jobDescription.trim())
+        : Promise.resolve(null);
+
       // 调用 AI 优化
       const optRes = await optimizeResumeApi({ text: textToOptimize });
       if (controller.signal.aborted) return;
@@ -174,6 +193,10 @@ export function useConversation() {
       }
 
       const data: OptimizeResult = optRes.data;
+
+      // 等待匹配度评估完成（若未填 JD，matchPromise 已 resolve 为 null）
+      const matchResult = await matchPromise;
+
       const v0: ResumeVersion = {
         id: "v0",
         index: 0,
@@ -198,6 +221,7 @@ export function useConversation() {
         tags: data.tags,
         highlights: data.highlights,
         suggestions: data.suggestions,
+        matchResult,
         currentResume: data.optimized,
         versions: [v0, v1],
         currentVersionIndex: 1,
@@ -219,7 +243,7 @@ export function useConversation() {
         isOptimizing: false,
       }));
     }
-  }, [state.file, state.resumeText]);
+  }, [state.file, state.resumeText, state.jobDescription]);
 
   // ========== 步骤 3：对话式迭代 ==========
 
@@ -320,11 +344,13 @@ export function useConversation() {
       step: 1,
       file: null,
       resumeText: "",
+      jobDescription: "",
       wordCount: 0,
       score: 0,
       tags: [],
       highlights: [],
       suggestions: [],
+      matchResult: null,
       currentResume: "",
       versions: [],
       currentVersionIndex: -1,
@@ -342,6 +368,7 @@ export function useConversation() {
     goToStep,
     handleFileUpload,
     handleTextInput,
+    handleJobInput,
     startOptimize,
     sendMessage,
     rollback,

@@ -1,4 +1,5 @@
 export { parseResumeApi, optimizeResumeApi, chatResumeApi, getDeepSeekKeyStatusApi } from "./modules/resume";
+export { analyzeResumeMatch } from "./modules/ai";
 export type {
   ApiResponse,
   ParseResult,
@@ -10,4 +11,5 @@ export type {
   ResumeSuggestion,
   SectionContext,
   DeepSeekKeyStatus,
+  MatchResult,
 } from "./types";

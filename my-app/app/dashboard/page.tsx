@@ -9,6 +9,7 @@ import {
   BellOutlined,
 } from '@ant-design/icons';
 import { motion } from 'framer-motion';
+import KnowledgeBasePanel from '@/components/KnowledgeBasePanel';
 
 /**
  * Dashboard 工作台主页内容
@@ -100,6 +101,11 @@ export default function DashboardPage() {
             </Card>
           </Col>
         </Row>
+
+        {/* 个人知识库（RAG 问答）—— P3 接入 */}
+        <div className="mt-8">
+          <KnowledgeBasePanel />
+        </div>
       </motion.div>
     </div>
   );

@@ -103,6 +103,7 @@ const ChatPanel: React.FC<Props> = ({ messages, isStreaming, onSend }) => {
         {QUICK_ACTIONS.map((action) => (
           <Tag
             key={action}
+            className="quick-action-tag"
             style={{ cursor: "pointer", fontSize: 12 }}
             onClick={() => onSend(action)}
           >
@@ -110,6 +111,33 @@ const ChatPanel: React.FC<Props> = ({ messages, isStreaming, onSend }) => {
           </Tag>
         ))}
       </div>
+
+      {/*
+        快捷指令 Tag 的显式配色（修复日间模式黑底不可读问题）
+        ============================================================
+        【根因】Antd 6 的 Tag 默认样式（浅灰底 + 深字 + 边框）通过
+        cssinjs 的 :where(.css-xxx) 低特异性选择器注入；qiankun 的
+        experimentalStyleIsolation 改写样式规则后这类选择器失效，
+        导致无 color 属性的裸 Tag 失去默认配色、被环境样式污染成黑底。
+
+        【修复】不再依赖 antd 默认 token，显式用 CSS 变量配色，
+        日间（浅底深字）与夜间（深底浅字）自动切换，!important
+        确保 cover 掉任何污染规则。
+      */}
+      <style>{`
+        .quick-action-tag {
+          background: var(--bg-soft) !important;
+          color: var(--text-2) !important;
+          border: 1px solid var(--border-1) !important;
+          border-radius: 6px;
+          user-select: none;
+        }
+        .quick-action-tag:hover {
+          background: var(--accent-1) !important;
+          color: var(--text-on-accent) !important;
+          border-color: var(--accent-1) !important;
+        }
+      `}</style>
 
       {/* 输入框 */}
       <div style={{ display: "flex", gap: 8 }}>

@@ -11,16 +11,19 @@ import { Card, Button } from "antd";
 import { ArrowLeftOutlined, DownloadOutlined } from "@ant-design/icons";
 import { motion } from "framer-motion";
 import ScoreGauge from "../components/ScoreGauge";
+import MatchCard from "../components/MatchCard";
 import ChatPanel from "../components/ChatPanel";
 import ResumePreview from "../components/ResumePreview";
 import VersionHistory from "../components/VersionHistory";
-import type { ChatMessage, ResumeTag } from "../../../api";
+import type { ChatMessage, ResumeTag, MatchResult } from "../../../api";
 import type { ResumeVersion } from "../../../hooks/useConversation";
 
 interface Props {
   score: number;
   tags: ResumeTag[];
   highlights: string[];
+  /** 岗位匹配度结果（null 表示未评估，不展示匹配度卡片） */
+  matchResult: MatchResult | null;
   currentResume: string;
   originalResume: string;
   versions: ResumeVersion[];
@@ -38,6 +41,7 @@ const Step3Optimize: React.FC<Props> = ({
   score,
   tags,
   highlights,
+  matchResult,
   currentResume,
   originalResume,
   versions,
@@ -56,6 +60,9 @@ const Step3Optimize: React.FC<Props> = ({
   >
     {/* 顶部评分 */}
     <ScoreGauge score={score} tags={tags} highlights={highlights} />
+
+    {/* 岗位匹配度（仅当填写了 JD 并评估成功时展示） */}
+    <MatchCard match={matchResult} />
 
     {/* 版本历史 */}
     <div style={{ display: "flex", gap: 12, alignItems: "center" }}>

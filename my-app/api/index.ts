@@ -19,6 +19,10 @@ export {
   testDeepSeekKey,
 } from "./modules/user";
 
+// 个人知识库模块（RAG）
+export { uploadKnowledgeApi, askKnowledgeStream } from "./modules/knowledge";
+export type { KnowledgeAskHandlers } from "./modules/knowledge";
+
 // Token 工具函数
 export { getToken, setToken, removeToken } from "./client";
 
@@ -36,6 +40,8 @@ export type {
   DeepSeekKeyTestResult,
   LoginParams,
   RegisterParams,
+  RetrievedChunk,
+  UploadResult,
 } from "./types";
 
 // 枚举和常量导出

@@ -19,16 +19,21 @@ const { TextArea } = Input;
 interface Props {
   file: File | null;
   resumeText: string;
+  /** 目标岗位描述 JD（可选，填写后额外评估岗位匹配度） */
+  jobDescription: string;
   onUpload: (file: File) => void;
   onTextInput: (text: string) => void;
+  onJobInput: (jd: string) => void;
   onOptimize: () => void;
 }
 
 const Step1Input: React.FC<Props> = ({
   file,
   resumeText,
+  jobDescription,
   onUpload,
   onTextInput,
+  onJobInput,
   onOptimize,
 }) => {
   const hasContent = !!file || !!resumeText.trim();
@@ -83,6 +88,29 @@ const Step1Input: React.FC<Props> = ({
             },
           ]}
         />
+        <Divider />
+
+        {/* 目标岗位描述（可选）—— 填写后额外评估岗位匹配度 */}
+        <div style={{ marginBottom: 16 }}>
+          <span
+            style={{
+              fontWeight: 600,
+              color: "var(--text-2)",
+              fontSize: 14,
+              display: "block",
+              marginBottom: 8,
+            }}
+          >
+            🎯 目标岗位描述（可选）
+          </span>
+          <TextArea
+            rows={4}
+            placeholder="粘贴目标岗位 JD，填写后将额外评估简历与岗位的匹配度（命中/缺失关键词、差距分析、改进计划等）"
+            value={jobDescription}
+            onChange={(e) => onJobInput(e.target.value)}
+          />
+        </div>
+
         <Divider />
         <Button
           type="primary"

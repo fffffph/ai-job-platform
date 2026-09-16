@@ -95,3 +95,22 @@ export interface DeepSeekKeyStatus {
   maskedTail: string;
   updatedAt: string | null;
 }
+
+// ========== 岗位匹配度（P2 结构化输出） ==========
+
+/** 匹配度评估结果（来自 POST /api/ai/resume/analyze 带 JD 时） */
+export interface MatchResult {
+  /** 匹配度评分 0-100 */
+  matchScore: number;
+  /** 简历已覆盖、与岗位匹配的关键词 */
+  matchedKeywords: string[];
+  /** 岗位要求但简历缺失的关键词 */
+  missingKeywords: string[];
+  /** 候选人与岗位的核心差距分析 */
+  gapAnalysis: string;
+  /** 按优先级排序的改进计划 */
+  improvementPlan: Array<{
+    action: string;
+    priority: "high" | "medium" | "low";
+  }>;
+}
