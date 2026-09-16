@@ -39,16 +39,21 @@ interface EmbeddingResponse {
  * 一次性把多条文本用单个 HTTP 请求发给 SiliconFlow（input 支持数组），
  * 比逐条调用更省时、更省钱。返回按 index 排序，保证与输入顺序一致。
  *
- * @param texts - 待向量化的文本数组
+ * @param texts  - 待向量化的文本数组
+ * @param apiKey - 可选：用户级 SiliconFlow Key（明文，来自 getDecryptedSiliconflowKey）
+ *                 传入时优先使用，否则回退到服务端环境变量 SILICONFLOW_API_KEY
  * @returns 与输入等长的二维向量数组（每条 1024 维 number[]）
  * @throws 无 Key / 网络失败 / 返回异常时抛出中文错误
  */
-export async function embedTexts(texts: string[]): Promise<number[][]> {
-  // ---------- 1. 读取并校验服务端级 Key ----------
-  const apiKey = process.env.SILICONFLOW_API_KEY ?? "";
-  if (!apiKey) {
+export async function embedTexts(
+  texts: string[],
+  apiKey?: string
+): Promise<number[][]> {
+  // ---------- 1. 读取并校验 Key（用户级优先，服务端 env 兜底） ----------
+  const key = apiKey || process.env.SILICONFLOW_API_KEY || "";
+  if (!key) {
     throw new Error(
-      "未配置服务端 SILICONFLOW_API_KEY，无法向量化文本，请在 .env 中配置硅基流动 API Key"
+      "未配置 SiliconFlow API Key，无法向量化文本，请在个人中心配置硅基流动 API Key"
     );
   }
 
@@ -72,7 +77,7 @@ export async function embedTexts(texts: string[]): Promise<number[][]> {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: `Bearer ${key}`,
       },
       body: JSON.stringify({
         model,
@@ -131,10 +136,14 @@ export async function embedTexts(texts: string[]): Promise<number[][]> {
 /**
  * 单条文本向量化。
  *
- * @param text - 待向量化的单条文本
+ * @param text   - 待向量化的单条文本
+ * @param apiKey - 可选：用户级 SiliconFlow Key，传入时优先使用
  * @returns 1024 维向量 number[]
  */
-export async function embedText(text: string): Promise<number[]> {
-  const results = await embedTexts([text]);
+export async function embedText(
+  text: string,
+  apiKey?: string
+): Promise<number[]> {
+  const results = await embedTexts([text], apiKey);
   return results[0];
 }

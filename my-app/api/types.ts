@@ -82,6 +82,14 @@ export interface DeepSeekKeyTestResult {
   message: string;
 }
 
+// ========== SiliconFlow API Key 类型（与 DeepSeek Key 对称） ==========
+
+/** SiliconFlow API Key 状态（结构与 DeepSeekKeyStatus 完全一致，脱敏） */
+export type SiliconFlowKeyStatus = DeepSeekKeyStatus;
+
+/** SiliconFlow API Key 连通性测试结果（结构与 DeepSeekKeyTestResult 一致） */
+export type SiliconFlowKeyTestResult = DeepSeekKeyTestResult;
+
 // ========== 认证相关类型 ==========
 
 /** 登录/注册成功返回的用户信息和 Token */

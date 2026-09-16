@@ -17,6 +17,10 @@ export {
   saveDeepSeekKey,
   deleteDeepSeekKey,
   testDeepSeekKey,
+  getSiliconFlowKeyStatus,
+  saveSiliconFlowKey,
+  deleteSiliconFlowKey,
+  testSiliconFlowKey,
 } from "./modules/user";
 
 // 个人知识库模块（RAG）
@@ -45,6 +49,8 @@ export type {
   AvatarResult,
   DeepSeekKeyStatus,
   DeepSeekKeyTestResult,
+  SiliconFlowKeyStatus,
+  SiliconFlowKeyTestResult,
   LoginParams,
   RegisterParams,
   RetrievedChunk,

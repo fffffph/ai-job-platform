@@ -73,6 +73,14 @@ model User {
   /** DeepSeek API Key 最后配置/更新时间 */
   deepseekKeyUpdatedAt DateTime? @map("deepseek_key_updated_at")
 
+  /**
+   * SiliconFlow（硅基流动）API Key 密文（用户自行配置，服务端 AES-256-GCM 加密后存储）
+   * 用于知识库 RAG 的 Embedding 向量化，与 DeepSeek Key 一样按用户隔离加密存储
+   */
+  siliconflowKeyCipher    String?  @map("siliconflow_key_cipher")
+  /** SiliconFlow API Key 最后配置/更新时间 */
+  siliconflowKeyUpdatedAt DateTime? @map("siliconflow_key_updated_at")
+
   // 【P5 新增】用户求职画像（1:1，用于职位推荐的个性化记忆）
   profile UserProfile?
 

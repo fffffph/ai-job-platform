@@ -22,6 +22,8 @@ import type {
   AvatarResult,
   DeepSeekKeyStatus,
   DeepSeekKeyTestResult,
+  SiliconFlowKeyStatus,
+  SiliconFlowKeyTestResult,
 } from "../types";
 
 // ============================================================
@@ -194,6 +196,84 @@ export async function testDeepSeekKey(
 ): Promise<ApiResponse<DeepSeekKeyTestResult>> {
   try {
     return await client.post("/api/user/deepseek-key/test", { apiKey });
+  } catch (error: any) {
+    return {
+      success: false,
+      message: error?.message || "测试失败，请稍后重试",
+      code: error?.code,
+    };
+  }
+}
+
+// ============================================================
+// SiliconFlow API Key 相关 API（与 DeepSeek Key 对称）
+// ============================================================
+
+/**
+ * 获取当前用户的 SiliconFlow API Key 状态（脱敏）
+ *
+ * GET /api/user/siliconflow-key（需 JWT 认证）
+ */
+export async function getSiliconFlowKeyStatus(): Promise<
+  ApiResponse<SiliconFlowKeyStatus>
+> {
+  try {
+    return await client.get("/api/user/siliconflow-key");
+  } catch (error: any) {
+    return {
+      success: false,
+      message: error?.message || "获取 API Key 状态失败",
+      code: error?.code,
+    };
+  }
+}
+
+/**
+ * 保存 SiliconFlow API Key（加密存储）
+ *
+ * PUT /api/user/siliconflow-key（需 JWT 认证）
+ */
+export async function saveSiliconFlowKey(
+  apiKey: string
+): Promise<ApiResponse<SiliconFlowKeyStatus>> {
+  try {
+    return await client.put("/api/user/siliconflow-key", { apiKey });
+  } catch (error: any) {
+    return {
+      success: false,
+      message: error?.message || "保存失败，请稍后重试",
+      code: error?.code,
+    };
+  }
+}
+
+/**
+ * 删除（清空）SiliconFlow API Key
+ *
+ * DELETE /api/user/siliconflow-key（需 JWT 认证）
+ */
+export async function deleteSiliconFlowKey(): Promise<ApiResponse<null>> {
+  try {
+    return await client.delete("/api/user/siliconflow-key");
+  } catch (error: any) {
+    return {
+      success: false,
+      message: error?.message || "删除失败，请稍后重试",
+      code: error?.code,
+    };
+  }
+}
+
+/**
+ * 测试 SiliconFlow API Key 连通性（不落库）
+ *
+ * POST /api/user/siliconflow-key/test（需 JWT 认证）
+ */
+export async function testSiliconFlowKey(
+  apiKey: string
+): Promise<ApiResponse<SiliconFlowKeyTestResult>> {
+  try {
+    return await client.post("/api/user/siliconflow-key/test", { apiKey });
   } catch (error: any) {
     return {
       success: false,

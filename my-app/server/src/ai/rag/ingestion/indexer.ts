@@ -18,6 +18,7 @@ import { randomUUID } from "node:crypto";
 import prisma from "../../../lib/prisma.js";
 import { chunkText } from "./chunker.js";
 import { embedTexts } from "../../llm/embedding.js";
+import { getDecryptedSiliconflowKey } from "../../../services/siliconflowKey.service.js";
 
 /** 入库结果 */
 export interface IngestResult {
@@ -70,7 +71,9 @@ export async function ingestDocument(
   // 若 embedding 失败（无 Key / 网络异常），此处直接抛错，documents 表不会写入，
   // 避免出现「有 documents 记录但无 chunks 的脏数据」。原实现先写 documents 再向量化，
   // 失败时会残留无 chunk 的文档记录（非事务性）。
-  const embeddings = await embedTexts(chunks);
+  // 【P5 修正】读取用户级 SiliconFlow Key（优先用户配置，服务端 env 兜底）
+  const siliconflowKey = await getDecryptedSiliconflowKey(userId);
+  const embeddings = await embedTexts(chunks, siliconflowKey);
 
   // ---------- 4. 写入文档表（documents） ----------
   // 【P3 修正】移到向量化成功之后，保证入库的是完整可检索的文档

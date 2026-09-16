@@ -12,6 +12,7 @@
 import type { Request, Response, NextFunction } from "express";
 import * as userService from "../services/user.service.js";
 import * as deepseekKeyService from "../services/deepseekKey.service.js";
+import * as siliconflowKeyService from "../services/siliconflowKey.service.js";
 
 // ============================================================
 // 获取用户资料
@@ -297,6 +298,134 @@ export async function testDeepSeekKey(
     }
 
     const result = await deepseekKeyService.testKey(apiKey);
+    res.status(200).json({ success: true, message: result.message, data: result });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// ============================================================
+// SiliconFlow API Key 管理（与 DeepSeek Key 对称）
+// ============================================================
+
+/**
+ * GET /api/user/siliconflow-key
+ *
+ * 获取当前用户的 SiliconFlow API Key 状态（脱敏，绝不含明文）。
+ */
+export async function getSiliconFlowKey(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const userId = (req as any).user?.id;
+    if (!userId) {
+      res.status(401).json({ success: false, message: "未登录", code: "UNAUTHORIZED" });
+      return;
+    }
+
+    const status = await siliconflowKeyService.getKeyStatus(userId);
+    res.status(200).json({ success: true, message: "获取成功", data: status });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * PUT /api/user/siliconflow-key
+ *
+ * Body: { apiKey: string }
+ * 校验格式后加密存储，返回脱敏状态。
+ */
+export async function saveSiliconFlowKey(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const userId = (req as any).user?.id;
+    if (!userId) {
+      res.status(401).json({ success: false, message: "未登录", code: "UNAUTHORIZED" });
+      return;
+    }
+
+    const { apiKey } = req.body;
+    if (!apiKey || !apiKey.trim()) {
+      res.status(400).json({ success: false, message: "请输入 SiliconFlow API Key" });
+      return;
+    }
+
+    try {
+      siliconflowKeyService.validateKeyFormat(apiKey);
+    } catch (e: any) {
+      res.status(400).json({ success: false, message: e.message, code: "INVALID_KEY_FORMAT" });
+      return;
+    }
+
+    const status = await siliconflowKeyService.saveKey(userId, apiKey);
+    res.status(200).json({ success: true, message: "API Key 保存成功", data: status });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * DELETE /api/user/siliconflow-key
+ *
+ * 清空当前用户的 SiliconFlow API Key。
+ */
+export async function deleteSiliconFlowKey(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const userId = (req as any).user?.id;
+    if (!userId) {
+      res.status(401).json({ success: false, message: "未登录", code: "UNAUTHORIZED" });
+      return;
+    }
+
+    await siliconflowKeyService.deleteKey(userId);
+    res.status(200).json({ success: true, message: "API Key 已删除" });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * POST /api/user/siliconflow-key/test
+ *
+ * Body: { apiKey: string }
+ * 测试传入的 Key 是否有效（不落库，仅连通性测试）。
+ */
+export async function testSiliconFlowKey(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const userId = (req as any).user?.id;
+    if (!userId) {
+      res.status(401).json({ success: false, message: "未登录", code: "UNAUTHORIZED" });
+      return;
+    }
+
+    const { apiKey } = req.body;
+    if (!apiKey || !apiKey.trim()) {
+      res.status(400).json({ success: false, message: "请输入要测试的 API Key" });
+      return;
+    }
+
+    try {
+      siliconflowKeyService.validateKeyFormat(apiKey);
+    } catch (e: any) {
+      res.status(400).json({ success: false, message: e.message, code: "INVALID_KEY_FORMAT" });
+      return;
+    }
+
+    const result = await siliconflowKeyService.testKey(apiKey);
     res.status(200).json({ success: true, message: result.message, data: result });
   } catch (error) {
     next(error);

@@ -53,6 +53,7 @@ import {
 import type { UserProfile } from "@/api";
 import { useRouter } from "next/navigation";
 import DeepSeekKeyCard from "./components/DeepSeekKeyCard";
+import SiliconFlowKeyCard from "./components/SiliconFlowKeyCard";
 
 // ============================================================
 // 后端基础地址（用于拼接头像 URL）
@@ -598,6 +599,9 @@ const ProfilePage = () => {
 
               {/* DeepSeek API Key 设置卡片 */}
               <DeepSeekKeyCard />
+
+              {/* SiliconFlow API Key 设置卡片（Embedding 向量化） */}
+              <SiliconFlowKeyCard />
             </div>
           </div>
         </div>

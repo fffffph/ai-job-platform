@@ -14,6 +14,7 @@
 
 import prisma from "../../../lib/prisma.js";
 import { embedText } from "../../llm/embedding.js";
+import { getDecryptedSiliconflowKey } from "../../../services/siliconflowKey.service.js";
 
 /** 默认检索条数 */
 export const DEFAULT_TOP_K = 5;
@@ -65,7 +66,9 @@ export async function retrieveChunks(
     : DEFAULT_TOP_K;
 
   // ---------- 1. 向量化查询 ----------
-  const queryEmbedding = await embedText(trimmedQuery);
+  // 【P5 修正】读取用户级 SiliconFlow Key（优先用户配置，服务端 env 兜底）
+  const siliconflowKey = await getDecryptedSiliconflowKey(userId);
+  const queryEmbedding = await embedText(trimmedQuery, siliconflowKey);
   const vectorLiteral = `[${queryEmbedding.join(",")}]`;
 
   // ---------- 2. 用余弦距离检索 Top-K ----------
