@@ -21,12 +21,19 @@ import type { ChatOpenAI } from "@langchain/openai";
 import {
   AIMessage,
   ToolMessage,
+  HumanMessage,
+  SystemMessage,
   type BaseMessage,
 } from "@langchain/core/messages";
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import type { JobsState } from "./state.js";
 import { collectTrace } from "../../trace/tracer.js";
 import { searchJobsTool } from "../../tools/function-calling/search-jobs.js";
+import type { JobPosting } from "../../tools/function-calling/job-data.js";
+import {
+  JobRecommendationSchema,
+  type JobRecommendation,
+} from "../../prompts/schemas/job-recommendation.js";
 
 /** 工具注册表：工具名 → 工具实例（Agent 通过 Function Calling 按名调用） */
 const TOOL_MAP: Record<string, StructuredToolInterface> = {
@@ -132,4 +139,145 @@ export async function toolsNode(state: JobsState): Promise<Partial<JobsState>> {
   });
 
   return { messages: toolMessages };
+}
+
+// ============================================================
+// finalize 节点（ReAct 循环结束后的结构化推荐）
+// ============================================================
+
+/** finalize 节点所需的用户求职画像 */
+export interface FinalizeProfile {
+  city: string;
+  skills: string;
+  expectedSalary: string;
+}
+
+/** finalize 节点系统 Prompt：要求从候选职位中选出最匹配的并生成结构化推荐 */
+const FINALIZE_SYSTEM_PROMPT = `你是资深求职顾问。请从「候选职位列表」中，根据「用户求职意向」选出最匹配的职位（最多 8 条），按匹配度从高到低排序，并为每条生成推荐原因和自动招呼语。
+
+要求：
+1. reason：一句话说明为什么适合（技能匹配/城市符合/薪资达标等），客观具体；
+2. greeting：礼貌的自动招呼语，突出求职者优势，可直接用于 BOSS直聘「立即沟通」，控制在 40 字以内；
+3. url：必须使用候选职位数据中自带的 url 字段（BOSS直达链接），不要自行编造或修改；
+4. summary：一句话总结本次推荐的整体情况；
+5. 全程简体中文。`;
+
+/**
+ * 从 ReAct 循环的消息流中提取所有搜索到的职位（按 id 去重）。
+ *
+ * 遍历消息流，找到所有 search_jobs 工具返回的 ToolMessage，
+ * 解析其中的 jobs 数组，按职位 id 去重后返回。
+ *
+ * @param messages - ReAct 循环的消息流
+ * @returns 去重后的职位列表
+ */
+function extractJobsFromMessages(messages: BaseMessage[]): JobPosting[] {
+  const seen = new Set<string>();
+  const jobs: JobPosting[] = [];
+
+  for (const msg of messages) {
+    if (!(msg instanceof ToolMessage)) continue;
+    if (msg.name !== "search_jobs") continue;
+
+    try {
+      const parsed = JSON.parse(String(msg.content)) as {
+        jobs?: JobPosting[];
+      };
+      for (const job of parsed.jobs ?? []) {
+        if (job?.id && !seen.has(job.id)) {
+          seen.add(job.id);
+          jobs.push(job);
+        }
+      }
+    } catch {
+      // 单条消息解析失败，跳过不影响整体
+    }
+  }
+
+  return jobs;
+}
+
+/**
+ * 构造 finalize 节点的人类消息（用户画像 + 候选职位列表）。
+ */
+function buildFinalizeMessage(
+  jobs: JobPosting[],
+  profile: FinalizeProfile
+): string {
+  return (
+    `【用户求职意向】\n` +
+    `城市：${profile.city || "不限"}\n` +
+    `技能栈：${profile.skills || "不限"}\n` +
+    `期望薪资：${profile.expectedSalary || "不限"}\n\n` +
+    `【候选职位列表】\n${JSON.stringify(jobs, null, 2)}\n\n` +
+    `请从上述职位中选出最匹配的，生成结构化推荐。`
+  );
+}
+
+/**
+ * 创建 finalize 节点（工厂函数）。
+ *
+ * 在 ReAct 循环结束后执行：从消息流提取搜索到的职位，结合用户画像，
+ * 用 withStructuredOutput 生成结构化推荐列表（含推荐原因/招呼语/直达链接）。
+ *
+ * @param llm     - 由 createDeepSeekChat 创建、已指向 DeepSeek 的模型实例
+ * @param profile - 用户求职画像（期望城市/技能/薪资）
+ */
+export function createFinalizeNode(
+  llm: ChatOpenAI,
+  profile: FinalizeProfile
+) {
+  // DeepSeek 结构化输出必须用 functionCalling（不支持 response_format）
+  const structuredLlm = llm.withStructuredOutput(JobRecommendationSchema, {
+    method: "functionCalling",
+  });
+
+  return async function finalizeNode(
+    state: JobsState
+  ): Promise<Partial<JobsState>> {
+    const startedAt = Date.now();
+
+    // 1. 提取搜索到的职位（去重）
+    const jobs = extractJobsFromMessages(state.messages);
+
+    // 2. 无职位 → 返回空推荐
+    if (jobs.length === 0) {
+      const empty: JobRecommendation = {
+        summary: "未搜索到匹配职位，请调整求职意向后再试",
+        recommendations: [],
+      };
+      collectTrace({
+        nodeName: "finalize",
+        input: { jobCount: 0 },
+        output: { recommendationCount: 0 },
+        durationMs: Date.now() - startedAt,
+        timestamp: new Date().toISOString(),
+      });
+      return { recommendations: empty };
+    }
+
+    // 3. 结构化生成推荐
+    const messages = [
+      new SystemMessage(FINALIZE_SYSTEM_PROMPT),
+      new HumanMessage(buildFinalizeMessage(jobs, profile)),
+    ];
+
+    let result: JobRecommendation;
+    try {
+      result = (await structuredLlm.invoke(messages)) as JobRecommendation;
+    } catch (error) {
+      const detail = (error as Error).message || "未知原因";
+      throw new Error(`职位推荐结构化生成失败：${detail}`);
+    }
+
+    collectTrace({
+      nodeName: "finalize",
+      input: { jobCount: jobs.length, profile },
+      output: { recommendationCount: result.recommendations.length },
+      durationMs: Date.now() - startedAt,
+      timestamp: new Date().toISOString(),
+    });
+
+    return { recommendations: result };
+  };
 }

@@ -85,6 +85,16 @@ export type { JobPosting } from "./tools/function-calling/job-data.js";
 // 【P4 新增】职位发现 Agent 系统 Prompt
 export { JOB_AGENT_SYSTEM_PROMPT } from "./prompts/system/job-agent.js";
 
+// 【P4 新增】职位推荐结构化输出 Schema（finalize 节点）
+export {
+  JobRecommendationSchema,
+  JobRecommendationItemSchema,
+} from "./prompts/schemas/job-recommendation.js";
+export type {
+  JobRecommendation,
+  JobRecommendationItem,
+} from "./prompts/schemas/job-recommendation.js";
+
 // 【P5 新增】用户求职画像（Memory 层：结构化记忆）
 export { getJobProfile, saveJobProfile } from "./memory/profile.js";
 export type { JobProfile } from "./memory/profile.js";

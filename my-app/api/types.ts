@@ -167,6 +167,34 @@ export interface JobProfile {
   expectedSalary: string;
 }
 
+// ========== 职位推荐结构化类型 ==========
+
+/** 单条职位推荐（含推荐原因/自动招呼语/BOSS直达链接） */
+export interface JobRecommendationItem {
+  /** 职位名称 */
+  jobTitle: string;
+  /** 公司名称 */
+  company: string;
+  /** 所在城市 */
+  city: string;
+  /** 薪资范围 */
+  salary: string;
+  /** 推荐原因 */
+  reason: string;
+  /** 自动招呼语（可复制到 BOSS直聘「立即沟通」） */
+  greeting: string;
+  /** BOSS直聘直达搜索链接 */
+  url: string;
+}
+
+/** 职位推荐结构化结果 */
+export interface JobRecommendation {
+  /** 一句话总结 */
+  summary: string;
+  /** 推荐职位列表 */
+  recommendations: JobRecommendationItem[];
+}
+
 // ========== AI Trace 类型（P6 可观测） ==========
 
 /** 单个 AI 节点的执行追踪记录 */

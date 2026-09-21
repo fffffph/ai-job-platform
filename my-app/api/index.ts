@@ -56,6 +56,8 @@ export type {
   RetrievedChunk,
   UploadResult,
   JobProfile,
+  JobRecommendation,
+  JobRecommendationItem,
   TraceEvent,
 } from "./types";
 

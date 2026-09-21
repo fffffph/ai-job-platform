@@ -16,7 +16,12 @@
 
 import client, { getToken } from "../client";
 import { readSSEStream, type SSEEvent } from "../sse";
-import type { ApiResponse, JobProfile, TraceEvent } from "../types";
+import type {
+  ApiResponse,
+  JobProfile,
+  TraceEvent,
+  JobRecommendation,
+} from "../types";
 
 /** 后端 API 基础地址（与 api/client.ts 的 baseURL 逻辑保持一致） */
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
@@ -35,14 +40,16 @@ export interface JobIntent {
 export interface JobRecommendHandlers {
   /** 开始执行 */
   onStart?: () => void;
-  /** Agent 完成一轮决策（action=call_tools 表示继续搜，answer 表示给出推荐） */
+  /** Agent 完成一轮决策（action=call_tools 表示继续搜，answer 表示停止搜索） */
   onAgentAction?: (action: "call_tools" | "answer", message: string) => void;
   /** 工具执行完成（已获取一批职位数据） */
   onToolsDone?: () => void;
+  /** finalize 节点完成（结构化推荐已生成，含推荐条数） */
+  onFinalize?: (recommendationCount: number) => void;
   /** 节点级 trace 事件（P6 可观测，供 AI Trace 面板展示决策过程） */
   onTrace?: (events: TraceEvent[]) => void;
-  /** 整个过程结束，返回最终推荐文本 */
-  onDone?: (answer: string) => void;
+  /** 最终结构化推荐结果（含推荐原因/招呼语/直达链接） */
+  onRecommendations?: (result: JobRecommendation | null) => void;
   /** 出错 */
   onError?: (message: string) => void;
 }
@@ -133,12 +140,17 @@ function dispatchJobsEvent(
         );
       } else if (nodeName === "tools") {
         handlers.onToolsDone?.();
+      } else if (nodeName === "finalize") {
+        handlers.onFinalize?.((payload.recommendationCount as number) ?? 0);
       }
       break;
     }
 
     case "done":
-      handlers.onDone?.((payload.answer as string) ?? "");
+      // 结构化推荐结果（含推荐原因/招呼语/直达链接）
+      handlers.onRecommendations?.(
+        (payload.recommendations as JobRecommendation) ?? null
+      );
       break;
 
     case "trace":

@@ -34,10 +34,48 @@ export interface JobPosting {
   source: string;
   tags: string[];
   requirements: string;
+  /** BOSS直聘直达搜索链接（点击跳转到真实职位搜索页，可直接投递） */
+  url: string;
 }
 
-/** 模拟职位库（约 24 条，西安为主） */
-export const MOCK_JOBS: JobPosting[] = [
+/**
+ * BOSS直聘 web 端城市代码映射（city 参数）。
+ * 用于把 mock 职位所在的城市转成 BOSS直聘搜索 URL 的城市代码，
+ * 让直达链接精准定位到对应城市。
+ */
+const BOSS_CITY_CODES: Record<string, string> = {
+  西安: "101110100",
+  北京: "101010100",
+  上海: "101020100",
+  广州: "101280100",
+  深圳: "101280600",
+  杭州: "101210100",
+  成都: "101270100",
+  南京: "101190100",
+  武汉: "101200100",
+};
+
+/**
+ * 构造 BOSS直聘职位搜索直达链接。
+ *
+ * 用职位名作为搜索关键词、城市代码限定地域，生成公开搜索页 URL。
+ * 用户点击后在已登录的 BOSS直聘里看到真实职位，可直接沟通投递。
+ * 这是「不抓取数据、只给链接」的合规直达方案。
+ *
+ * @param title - 职位名（作为搜索关键词）
+ * @param city  - 城市（映射为城市代码）
+ * @returns BOSS直聘搜索页 URL
+ */
+export function buildBossUrl(title: string, city: string): string {
+  const cityCode = BOSS_CITY_CODES[city] ?? "";
+  const params = new URLSearchParams();
+  params.set("query", title);
+  if (cityCode) params.set("city", cityCode);
+  return `https://www.zhipin.com/web/geek/job?${params.toString()}`;
+}
+
+/** 模拟职位库原始数据（不含 url，url 由 MOCK_JOBS 统一生成） */
+const RAW_JOBS: Omit<JobPosting, "url">[] = [
   {
     id: "job-001",
     title: "高级前端工程师",
@@ -279,6 +317,15 @@ export const MOCK_JOBS: JobPosting[] = [
     requirements: "熟悉 React + Docker 容器化部署，了解 Nginx 反向代理",
   },
 ];
+
+/**
+ * 模拟职位库（约 24 条，西安为主），每条附带 BOSS直聘直达链接。
+ * 由 RAW_JOBS 统一补充 url 字段生成，避免手写 24 个链接。
+ */
+export const MOCK_JOBS: JobPosting[] = RAW_JOBS.map((job) => ({
+  ...job,
+  url: buildBossUrl(job.title, job.city),
+}));
 
 /**
  * 按关键词与城市搜索职位。

@@ -67,6 +67,8 @@ import type {
   RetrievedChunk,
   // 【P4 新增】职位发现状态类型
   JobsState,
+  // 【P4 新增】职位推荐结构化输出类型
+  JobRecommendation,
   // 【P5 新增】用户求职画像类型
   JobProfile,
 } from "../ai/index.js";
@@ -560,27 +562,31 @@ async function recommendJobs(req: Request, res: Response): Promise<void> {
         new SystemMessage(JOB_AGENT_SYSTEM_PROMPT),
         new HumanMessage(intent),
       ],
+      recommendations: null,
     };
 
     // 通知客户端开始执行
     sse.send("meta", { type: "start", message: "开始职位发现" });
 
-    // 根据当前用户 Key 构建 ReAct 图（按请求构建，保证 Key 隔离）
-    const graph = buildJobsGraph(apiKey);
+    // 根据当前用户 Key 构建 ReAct 图（按请求构建，保证 Key 隔离），
+    // 传入用户画像供 finalize 节点做个性化结构化推荐
+    const graph = buildJobsGraph(apiKey, {
+      profile: { city, skills, expectedSalary },
+    });
 
     // ReAct 循环为非流式（需完整 AIMessage 判断 tool_calls），用 updates 模式
     const stream = await graph.stream(initialState, {
       streamMode: "updates",
     });
 
-    let finalAnswer = "";
+    let finalRecommendation: JobRecommendation | null = null;
 
     for await (const updates of stream) {
       const updateMap = updates as Record<string, Partial<JobsState>>;
 
       for (const [nodeName, update] of Object.entries(updateMap)) {
         if (nodeName === "agent") {
-          // agent 节点：推送本轮决策结果（调用工具 / 给出回答）
+          // agent 节点：推送本轮决策结果（调用工具 / 结束搜索）
           const newMessages = update.messages ?? [];
           const lastMsg = newMessages[newMessages.length - 1] as
             | AIMessage
@@ -591,30 +597,35 @@ async function recommendJobs(req: Request, res: Response): Promise<void> {
           sse.send("node", {
             nodeName: "agent",
             done: true,
-            message: hasToolCalls ? "Agent 正在搜索职位…" : "Agent 已完成推荐",
+            message: hasToolCalls ? "Agent 正在搜索职位…" : "搜索完成，正在生成推荐…",
             action: hasToolCalls ? "call_tools" : "answer",
           });
-
-          if (!hasToolCalls && lastMsg) {
-            finalAnswer =
-              typeof lastMsg.content === "string" ? lastMsg.content : "";
-          }
         } else if (nodeName === "tools") {
           sse.send("node", {
             nodeName: "tools",
             done: true,
             message: "已获取职位数据",
           });
+        } else if (nodeName === "finalize") {
+          // finalize 节点：结构化推荐结果（含推荐原因/招呼语/直达链接）
+          finalRecommendation = update.recommendations ?? null;
+          sse.send("node", {
+            nodeName: "finalize",
+            done: true,
+            message: "推荐生成完成",
+            recommendationCount:
+              finalRecommendation?.recommendations.length ?? 0,
+          });
         }
       }
     }
 
-    // 附带节点级 trace 事件 + 完成事件（含最终推荐）
+    // 附带节点级 trace 事件 + 完成事件（含结构化推荐）
     sse.send("trace", { events: getTrace() });
     sse.send("done", {
       success: true,
       message: "职位推荐完成",
-      answer: finalAnswer,
+      recommendations: finalRecommendation,
     });
 
     // 【P5 新增】推荐结束后自动保存求职画像（跨轮记忆更新）
