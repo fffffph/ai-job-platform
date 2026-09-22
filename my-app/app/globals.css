@@ -124,3 +124,102 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* ============================================
+   AI 回答 Markdown 样式（知识库智能问答）
+   LLM 返回内容为 Markdown 格式，react-markdown
+   渲染后用以下样式统一排版，明暗主题自适应。
+   ============================================ */
+.md-answer {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--foreground, #1a1a1a);
+  word-break: break-word;
+}
+/* 加粗 / 斜体 */
+.md-answer strong {
+  font-weight: 600;
+  color: var(--foreground, #1a1a1a);
+}
+/* 标题（### 等降级为小节标题视觉） */
+.md-answer h1,
+.md-answer h2,
+.md-answer h3,
+.md-answer h4 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 12px 0 6px;
+}
+.md-answer h1:first-child,
+.md-answer h2:first-child,
+.md-answer h3:first-child {
+  margin-top: 0;
+}
+/* 段落与列表间距 */
+.md-answer p {
+  margin: 6px 0;
+}
+.md-answer ul,
+.md-answer ol {
+  margin: 6px 0;
+  padding-left: 20px;
+}
+.md-answer li {
+  margin: 3px 0;
+}
+/* 行内代码与代码块 */
+.md-answer code {
+  background: var(--muted, #f3f4f6);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 13px;
+}
+.md-answer pre {
+  background: var(--muted, #f3f4f6);
+  border-radius: 8px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  margin: 8px 0;
+}
+.md-answer pre code {
+  background: transparent;
+  padding: 0;
+}
+/* 引用块 */
+.md-answer blockquote {
+  border-left: 3px solid var(--border, #e5e7eb);
+  margin: 8px 0;
+  padding: 2px 0 2px 10px;
+  color: var(--muted-foreground, #6b7280);
+}
+/* 分隔线 */
+.md-answer hr {
+  border: none;
+  border-top: 1px solid var(--border, #e5e7eb);
+  margin: 12px 0;
+}
+/* 表格（部分回答会用表格对比） */
+.md-answer table {
+  border-collapse: collapse;
+  margin: 8px 0;
+  width: 100%;
+}
+.md-answer th,
+.md-answer td {
+  border: 1px solid var(--border, #e5e7eb);
+  padding: 5px 8px;
+  text-align: left;
+  font-size: 13px;
+}
+.md-answer th {
+  background: var(--muted, #f9fafb);
+  font-weight: 600;
+}
+/* 链接 */
+.md-answer a {
+  color: #3b82f6;
+  text-decoration: none;
+}
+.md-answer a:hover {
+  text-decoration: underline;
+}

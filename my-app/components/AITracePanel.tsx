@@ -95,6 +95,37 @@ function summarizeOutput(output: unknown): string {
   return "";
 }
 
+/**
+ * 将 Date 格式化为 HH:mm:ss.SSS（毫秒精度）。
+ * AI 各节点耗时经常只有几百毫秒，精确到毫秒才能看清节点间的衔接。
+ */
+function formatTime(d: Date): string {
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  const ss = String(d.getSeconds()).padStart(2, "0");
+  const ms = String(d.getMilliseconds()).padStart(3, "0");
+  return `${hh}:${mm}:${ss}.${ms}`;
+}
+
+/**
+ * 解析节点的执行时间窗口。
+ * 后端 timestamp 在节点结束时记录，因此：
+ *   开始时间 = timestamp - durationMs，结束时间 = timestamp。
+ * 返回格式化后的文本；timestamp 缺失或非法时返回 null（不显示时间行）。
+ */
+function parseNodeTime(
+  evt: TraceEvent
+): { startText: string; endText: string; startDate: Date } | null {
+  const end = new Date(evt.timestamp);
+  if (Number.isNaN(end.getTime())) return null;
+  const start = new Date(end.getTime() - evt.durationMs);
+  return {
+    startText: formatTime(start),
+    endText: formatTime(end),
+    startDate: start,
+  };
+}
+
 interface Props {
   /** trace 事件列表（按发生顺序） */
   events: TraceEvent[];
@@ -107,12 +138,29 @@ const AITracePanel: React.FC<Props> = ({ events }) => {
 
   const totalMs = events.reduce((sum, e) => sum + e.durationMs, 0);
 
+  // 整个流程的起点时间 = 第一个节点的开始时间，
+  // 后续节点用它计算「距开始 +Nms」的相对偏移
+  const firstTime = events.length > 0 ? parseNodeTime(events[0]) : null;
+  const baseStartMs = firstTime?.startDate.getTime();
+  // 整个流程的终点时间 = 最后一个节点的结束时间（用于标题展示整体起止）
+  const lastEndTime =
+    events.length > 0 ? parseNodeTime(events[events.length - 1]) : null;
+
   return (
     <Card
       size="small"
       title={
         <span>
           🔍 AI 决策过程（{events.length} 步，总耗时 {totalMs}ms）
+          {/* 有合法时间戳时，标题补充整体起止时钟，一眼看清这轮 AI 跑在哪个时间段 */}
+          {firstTime && lastEndTime && (
+            <Text
+              type="secondary"
+              style={{ fontSize: 12, marginLeft: 8, fontWeight: 400 }}
+            >
+              {firstTime.startText} ~ {lastEndTime.endText}
+            </Text>
+          )}
         </span>
       }
       style={{ borderRadius: 12, marginBottom: 16 }}
@@ -121,6 +169,13 @@ const AITracePanel: React.FC<Props> = ({ events }) => {
         items={events.map((evt, index) => {
           const label = NODE_LABELS[evt.nodeName] ?? evt.nodeName;
           const summary = summarizeOutput(evt.output);
+
+          // 解析该节点的开始/结束时间与相对偏移（timestamp 非法时为 null，不显示）
+          const timeInfo = parseNodeTime(evt);
+          const offsetMs =
+            timeInfo && baseStartMs !== undefined
+              ? timeInfo.startDate.getTime() - baseStartMs
+              : null;
 
           return {
             key: index,
@@ -140,6 +195,31 @@ const AITracePanel: React.FC<Props> = ({ events }) => {
                     </Text>
                   )}
                 </Space>
+
+                {/* 时间节点行：显示「开始 → 结束」毫秒级时钟 + 距流程开始的相对偏移 */}
+                {timeInfo && (
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 4,
+                      fontSize: 12,
+                      color: "var(--muted-foreground, #888)",
+                      marginBottom: 4,
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
+                    <ClockCircleOutlined />
+                    <span>
+                      {timeInfo.startText} → {timeInfo.endText}
+                      {offsetMs !== null && (
+                        <span style={{ marginLeft: 6 }}>
+                          （距开始 +{offsetMs}ms）
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                )}
 
                 <Collapse
                   ghost

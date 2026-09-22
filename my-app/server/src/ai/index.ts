@@ -62,12 +62,25 @@ export { embedText, embedTexts } from "./llm/embedding.js";
 
 // 【P3 新增】RAG 离线写入（分块 + 向量化 + 入库）
 export { chunkText, CHUNK_SIZE, CHUNK_OVERLAP } from "./rag/ingestion/chunker.js";
-export { ingestDocument } from "./rag/ingestion/indexer.js";
-export type { IngestResult } from "./rag/ingestion/indexer.js";
+export { ingestDocument, ingestEntries } from "./rag/ingestion/indexer.js";
+export type { IngestResult, IngestEntriesResult } from "./rag/ingestion/indexer.js";
+
+// 【知识库文件解析】Excel 解析 + 模板生成 + 文件真相源
+export { parseExcel, buildTemplate } from "./rag/ingestion/excel-parser.js";
+export type { KnowledgeEntry, ExcelParseResult } from "./rag/ingestion/excel-parser.js";
+export { saveKnowledgeFile, getKnowledgeFile, getKnowledgeFileInfo, deleteKnowledgeFile } from "./rag/ingestion/file-store.js";
+export type { KnowledgeFileRecord, KnowledgeFileInfo } from "./rag/ingestion/file-store.js";
 
 // 【P3 新增】RAG 在线查询（向量检索）
 export { retrieveChunks, DEFAULT_TOP_K } from "./rag/retrieval/retriever.js";
 export type { RetrievedChunk } from "./rag/retrieval/retriever.js";
+
+// 【知识库文件解析】文档管理（列表/删除）
+export { listDocuments, deleteDocument } from "./rag/document-manager.js";
+export type { KnowledgeDocumentItem } from "./rag/document-manager.js";
+
+// 【知识库文件解析】文本解析（规则 + LLM 兜底）
+export { parseTextToEntries, parseTextWithLLM } from "./rag/text-parser.js";
 
 // 【P3 新增】RAG 问答图
 export { buildRagGraph } from "./graphs/rag/graph.js";

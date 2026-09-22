@@ -135,6 +135,8 @@ export enum ErrorCode {
 
 /** 知识库检索命中的单个文档分块 */
 export interface RetrievedChunk {
+  /** 来源文档 ID（用于关键词命中融合） */
+  documentId: string;
   /** 分块文本内容 */
   content: string;
   /** 来源文档标题 */
@@ -151,6 +153,46 @@ export interface UploadResult {
   documentId: string;
   /** 分块数量 */
   chunkCount: number;
+}
+
+/** 知识库文档条目（我的知识列表） */
+export interface KnowledgeDocument {
+  /** 文档 ID */
+  id: string;
+  /** 文档标题 */
+  title: string;
+  /** 检索词（逗号分隔，可空） */
+  keywords: string | null;
+  /** 分类（可空） */
+  category: string | null;
+  /** 分块数量 */
+  chunkCount: number;
+  /** 入库时间（ISO 字符串） */
+  createdAt: string;
+}
+
+/** Excel 批量导入结果 */
+export interface ImportResult {
+  /** 入库条目数 */
+  documentCount: number;
+  /** 总的分块数 */
+  chunkCount: number;
+  /** 有效数据行总数 */
+  total: number;
+  /** 失败行（行号 + 原因） */
+  failed: { row: number; reason: string }[];
+}
+
+/** 知识条目（文本解析 / Excel 导入的中间结构） */
+export interface KnowledgeEntry {
+  /** 条目标题 */
+  title: string;
+  /** 条目内容 */
+  content: string;
+  /** 逗号分隔检索词（可选） */
+  keywords?: string;
+  /** 分类（可选） */
+  category?: string;
 }
 
 // ========== 求职画像类型（P5 Memory） ==========

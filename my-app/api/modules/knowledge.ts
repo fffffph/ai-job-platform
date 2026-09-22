@@ -21,7 +21,15 @@
 
 import client, { getToken } from "../client";
 import { readSSEStream, type SSEEvent } from "../sse";
-import type { ApiResponse, RetrievedChunk, UploadResult, TraceEvent } from "../types";
+import type {
+  ApiResponse,
+  RetrievedChunk,
+  UploadResult,
+  TraceEvent,
+  KnowledgeDocument,
+  ImportResult,
+  KnowledgeEntry,
+} from "../types";
 
 /** 后端 API 基础地址（与 api/client.ts 的 baseURL 逻辑保持一致） */
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
@@ -50,6 +58,245 @@ export async function uploadKnowledgeApi(
     return {
       success: false,
       message: err?.message || "文档上传失败",
+      code: err?.code,
+    };
+  }
+}
+
+// ============================================================
+// 文件下载（模板 / 上次文件）与 Excel 导入
+// ============================================================
+
+/** 下载结果 */
+export interface DownloadResult {
+  ok: boolean;
+  message?: string;
+}
+
+/**
+ * 用 fetch 下载后端文件并触发浏览器保存。
+ * 从 Content-Disposition 的 filename*（UTF-8 编码）解析真实文件名，兜底用 fallbackName。
+ */
+async function downloadBlob(
+  url: string,
+  fallbackName: string
+): Promise<DownloadResult> {
+  const token = getToken();
+  try {
+    const res = await fetch(url, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) {
+      let message = `下载失败 (${res.status})`;
+      try {
+        const body = (await res.json()) as { message?: string };
+        if (body.message) message = body.message;
+      } catch {
+        // 忽略非 JSON 响应
+      }
+      return { ok: false, message };
+    }
+
+    const blob = await res.blob();
+    const disposition = res.headers.get("content-disposition") || "";
+    const nameMatch = disposition.match(/filename\*=UTF-8''([^;]+)/);
+    const filename = nameMatch ? decodeURIComponent(nameMatch[1]) : fallbackName;
+
+    // 触发浏览器下载
+    const anchor = document.createElement("a");
+    const objectUrl = URL.createObjectURL(blob);
+    anchor.href = objectUrl;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(objectUrl);
+    return { ok: true };
+  } catch {
+    return { ok: false, message: "网络异常，下载失败" };
+  }
+}
+
+/**
+ * 下载知识库导入模板（首次使用时引导用户下载）。
+ */
+export async function downloadKnowledgeTemplate(): Promise<DownloadResult> {
+  return downloadBlob(
+    `${API_BASE}/api/ai/knowledge/template`,
+    "knowledge-template.xlsx"
+  );
+}
+
+/**
+ * 下载上次上传的原始文件（文件真相源，供继续编辑）。
+ */
+export async function downloadKnowledgeFile(): Promise<DownloadResult> {
+  return downloadBlob(`${API_BASE}/api/ai/knowledge/file`, "knowledge.xlsx");
+}
+
+/** 文件元信息（前端据此判断显示「模板引导」还是「文件卡片」） */
+export interface KnowledgeFileInfoResult {
+  /** 是否上传过文件 */
+  hasFile: boolean;
+  /** 原始文件名（有文件时返回） */
+  filename?: string;
+  /** 上次上传时间 ISO 字符串（有文件时返回） */
+  updatedAt?: string;
+}
+
+/**
+ * 查询用户上传文件的元信息（轻量，不含文件字节）。
+ */
+export async function getKnowledgeFileInfoApi(): Promise<
+  ApiResponse<KnowledgeFileInfoResult>
+> {
+  try {
+    return await client.get("/api/ai/knowledge/file-info");
+  } catch (error: unknown) {
+    const err = error as { message?: string; code?: string };
+    return {
+      success: false,
+      message: err?.message || "查询文件信息失败",
+      code: err?.code,
+    };
+  }
+}
+
+/**
+ * 删除保存的原始文件记录（只删文件真相源，不动已入库的知识）。
+ */
+export async function deleteKnowledgeFileApi(): Promise<ApiResponse<null>> {
+  try {
+    return await client.delete("/api/ai/knowledge/file");
+  } catch (error: unknown) {
+    const err = error as { message?: string; code?: string };
+    return {
+      success: false,
+      message: err?.message || "删除失败",
+      code: err?.code,
+    };
+  }
+}
+
+/**
+ * 上传 Excel 文件批量导入知识库（multipart）。
+ *
+ * POST /api/ai/knowledge/import（需 JWT 认证）
+ *
+ * @param file - 用户选择的 .xlsx 文件
+ * @param mode - replace（同步替换，默认）/ append（追加合并）
+ * @returns 导入结果（documentCount + failed 行号汇总）
+ */
+export async function importKnowledgeFromFile(
+  file: File,
+  mode: "replace" | "append"
+): Promise<ApiResponse<ImportResult>> {
+  const token = getToken();
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("mode", mode);
+
+  try {
+    // 注意：multipart 不能手动设置 Content-Type，浏览器会自动带 boundary
+    const res = await fetch(`${API_BASE}/api/ai/knowledge/import`, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: formData,
+    });
+    return (await res.json()) as ApiResponse<ImportResult>;
+  } catch {
+    return { success: false, message: "网络异常，导入失败" };
+  }
+}
+
+// ============================================================
+// 我的知识列表 / 删除
+// ============================================================
+
+/**
+ * 列出当前用户的所有知识库文档（我的知识列表）。
+ */
+export async function listKnowledgeDocuments(): Promise<
+  ApiResponse<KnowledgeDocument[]>
+> {
+  try {
+    return await client.get("/api/ai/knowledge/documents");
+  } catch (error: unknown) {
+    const err = error as { message?: string; code?: string };
+    return {
+      success: false,
+      message: err?.message || "查询知识库失败",
+      code: err?.code,
+    };
+  }
+}
+
+/**
+ * 删除单条知识文档。
+ */
+export async function deleteKnowledgeDocument(
+  id: string
+): Promise<ApiResponse<null>> {
+  try {
+    return await client.delete(`/api/ai/knowledge/documents/${id}`);
+  } catch (error: unknown) {
+    const err = error as { message?: string; code?: string };
+    return {
+      success: false,
+      message: err?.message || "删除失败",
+      code: err?.code,
+    };
+  }
+}
+
+/** 文本解析结果 */
+export interface ParseTextResult {
+  /** 解析出的条目列表 */
+  entries: KnowledgeEntry[];
+  /** 是否建议开启 AI 智能解析（规则解析未命中时） */
+  needLLM: boolean;
+}
+
+/**
+ * 文本解析成知识条目（规则解析 + 可选 LLM 兜底）。
+ *
+ * POST /api/ai/knowledge/parse-text
+ *
+ * @param text   - 用户粘贴的文本
+ * @param useLLM - 规则解析无结果时是否用 LLM 兜底解析
+ */
+export async function parseTextToEntriesApi(
+  text: string,
+  useLLM: boolean
+): Promise<ApiResponse<ParseTextResult>> {
+  try {
+    return await client.post("/api/ai/knowledge/parse-text", { text, useLLM });
+  } catch (error: unknown) {
+    const err = error as { message?: string; code?: string };
+    return {
+      success: false,
+      message: err?.message || "解析失败，请稍后重试",
+      code: err?.code,
+    };
+  }
+}
+
+/**
+ * JSON 数组批量入库（文本解析确认后调用）。
+ *
+ * POST /api/ai/knowledge/batch
+ */
+export async function batchImportEntries(
+  entries: KnowledgeEntry[],
+  mode: "replace" | "append"
+): Promise<ApiResponse<{ documentCount: number; chunkCount: number }>> {
+  try {
+    return await client.post("/api/ai/knowledge/batch", { entries, mode });
+  } catch (error: unknown) {
+    const err = error as { message?: string; code?: string };
+    return {
+      success: false,
+      message: err?.message || "入库失败，请稍后重试",
       code: err?.code,
     };
   }

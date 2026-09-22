@@ -1,31 +1,48 @@
 "use client";
 
-import React from 'react';
-import { Card, Row, Col, Statistic, Avatar, Tag, Button, theme, Flex } from 'antd';
-import { 
-  ProjectOutlined, 
-  FileTextOutlined, 
+import React from "react";
+import { Card, Row, Col, Typography } from "antd";
+import {
+  FileTextOutlined,
   ThunderboltOutlined,
-  BellOutlined,
-} from '@ant-design/icons';
-import { motion } from 'framer-motion';
-import KnowledgeBasePanel from '@/components/KnowledgeBasePanel';
+  UserOutlined,
+  ArrowRightOutlined,
+} from "@ant-design/icons";
+import { motion } from "framer-motion";
+import { useRouter } from "next/navigation";
+import KnowledgeBasePanel from "@/components/KnowledgeBasePanel";
+
+const { Title, Text } = Typography;
 
 /**
- * Dashboard 工作台主页内容
+ * Dashboard 工作台主页内容。
+ * - 欢迎语；
+ * - 三个真实功能入口卡片（点击跳转到对应已实现模块）；
+ * - 个人知识库面板（真实数据）。
  */
 export default function DashboardPage() {
-  const stats = [
-    { title: '职位匹配度', value: 92, suffix: '%', icon: <ThunderboltOutlined className="text-yellow-500" /> },
-    { title: '待面试', value: 3, suffix: '场', icon: <ProjectOutlined className="text-blue-500" /> },
-    { title: '简历优化度', value: 85, suffix: '%', icon: <FileTextOutlined className="text-green-500" /> },
-    { title: '消息通知', value: 12, suffix: '条', icon: <BellOutlined className="text-purple-500" /> },
-  ];
+  const router = useRouter();
 
-  const recentActivities = [
-    { title: '字节跳动 - 前端开发工程师', status: '面试邀约', date: '2026-05-22', color: 'blue' },
-    { title: '腾讯 - AI 研究员', status: '已投递', date: '2026-05-21', color: 'cyan' },
-    { title: '阿里 - 产品经理', status: '简历通过', date: '2026-05-20', color: 'green' },
+  // 功能入口
+  const features = [
+    {
+      title: "简历优化",
+      desc: "AI 解析简历 + 岗位匹配度评估",
+      icon: <FileTextOutlined style={{ fontSize: 22, color: "#3b82f6" }} />,
+      path: "/dashboard/resume",
+    },
+    {
+      title: "职位发现",
+      desc: "ReAct Agent 智能推荐匹配职位",
+      icon: <ThunderboltOutlined style={{ fontSize: 22, color: "#f59e0b" }} />,
+      path: "/dashboard/jobs",
+    },
+    {
+      title: "个人中心",
+      desc: "配置 API Key · 求职画像",
+      icon: <UserOutlined style={{ fontSize: 22, color: "#10b981" }} />,
+      path: "/dashboard/profile",
+    },
   ];
 
   return (
@@ -35,74 +52,47 @@ export default function DashboardPage() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
       >
-        {/* 数据统计 */}
+        {/* 欢迎语 */}
+        <div style={{ marginBottom: 24 }}>
+          <Title level={4} style={{ marginBottom: 4 }}>
+            欢迎回来 👋
+          </Title>
+          <Text type="secondary">
+            从下面的功能开始，或直接管理你的个人知识库。
+          </Text>
+        </div>
+
+        {/* 功能入口卡片 */}
         <Row gutter={[24, 24]}>
-          {stats.map((item, index) => (
-            <Col xs={24} sm={12} lg={6} key={index}>
-              <Card className="bg-card/50 border-border hover:border-primary/50 transition-all">
-                <Statistic
-                  title={<span className="text-muted-foreground">{item.title}</span>}
-                  value={item.value}
-                  suffix={item.suffix}
-                  prefix={item.icon}
-                  styles={{ content: { color: 'var(--foreground)', fontWeight: 'bold' } }}
-                />
+          {features.map((feature, index) => (
+            <Col xs={24} sm={8} key={index}>
+              <Card
+                hoverable
+                onClick={() => router.push(feature.path)}
+                style={{ borderRadius: 12, height: "100%" }}
+              >
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    {feature.icon}
+                    <div>
+                      <div style={{ fontSize: 15, fontWeight: 500 }}>
+                        {feature.title}
+                      </div>
+                      <div style={{ fontSize: 13, color: "var(--color-text-secondary, #666)" }}>
+                        {feature.desc}
+                      </div>
+                    </div>
+                  </div>
+                  <Text type="secondary" style={{ fontSize: 12, alignSelf: "flex-end" }}>
+                    进入 <ArrowRightOutlined />
+                  </Text>
+                </div>
               </Card>
             </Col>
           ))}
         </Row>
 
-        <Row gutter={[24, 24]} className="mt-8">
-          {/* 最近活动 */}
-          <Col xs={24} lg={16}>
-            <Card 
-              title={<span className="text-foreground">最近动态</span>}
-              className="bg-card/50 border-border h-full"
-              extra={<a href="#" className="text-primary hover:text-primary/80">查看全部</a>}
-            >
-              <div className="space-y-4">
-                {recentActivities.map((item, index) => (
-                  <Flex 
-                    key={index} 
-                    align="center" 
-                    justify="space-between" 
-                    className="py-3 border-b border-border last:border-0"
-                  >
-                    <Flex gap="middle" align="center">
-                      <Avatar icon={<ProjectOutlined />} className="bg-primary/20 text-primary" />
-                      <div>
-                        <div className="text-foreground/80 font-medium">{item.title}</div>
-                        <div className="text-muted-foreground text-xs">{item.date}</div>
-                      </div>
-                    </Flex>
-                    <Tag color={item.color} className="border-0 bg-opacity-20 m-0">{item.status}</Tag>
-                  </Flex>
-                ))}
-              </div>
-            </Card>
-          </Col>
-
-          {/* 快捷操作 */}
-          <Col xs={24} lg={8}>
-            <Card 
-              title={<span className="text-foreground">AI 智能助手</span>}
-              className="bg-card/50 border-border h-full"
-            >
-              <div className="space-y-4">
-                <div className="p-4 rounded-xl bg-blue-600/10 border border-blue-500/20">
-                  <p className="text-blue-500 dark:text-blue-400 text-sm mb-3">AI 发现你有 5 个高度匹配的新职位，是否立即查看？</p>
-                  <Button type="primary" size="small" block>立即匹配</Button>
-                </div>
-                <div className="p-4 rounded-xl bg-purple-600/10 border border-purple-500/20">
-                  <p className="text-purple-500 dark:text-purple-400 text-sm mb-3">您的简历可以针对“算法工程师”岗位进行定向优化。</p>
-                  <Button type="primary" size="small" block className="bg-purple-600 border-none hover:bg-purple-500">简历优化</Button>
-                </div>
-              </div>
-            </Card>
-          </Col>
-        </Row>
-
-        {/* 个人知识库（RAG 问答）—— P3 接入 */}
+        {/* 个人知识库（RAG 问答 + 文件导入） */}
         <div className="mt-8">
           <KnowledgeBasePanel />
         </div>

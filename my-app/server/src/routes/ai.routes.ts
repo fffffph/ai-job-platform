@@ -43,6 +43,7 @@ import {
 } from "@langchain/core/messages";
 import { authMiddleware } from "../middleware/auth.js";
 import { getDecryptedKey } from "../services/deepseekKey.service.js";
+import multer from "multer";
 import {
   buildResumeGraph,
   createSSEWriter,
@@ -57,6 +58,20 @@ import {
   // 【P5 新增】用户求职画像（Memory 层）
   getJobProfile,
   saveJobProfile,
+  // 【知识库文件解析】Excel 解析 + 模板 + 文件真相源 + 批量入库
+  parseExcel,
+  buildTemplate,
+  ingestEntries,
+  saveKnowledgeFile,
+  getKnowledgeFile,
+  getKnowledgeFileInfo,
+  deleteKnowledgeFile,
+  // 【知识库文件解析】文档管理（列表/删除）
+  listDocuments,
+  deleteDocument,
+  // 【知识库文件解析】文本解析（规则 + LLM 兜底）
+  parseTextToEntries,
+  parseTextWithLLM,
 } from "../ai/index.js";
 import type {
   ResumeState,
@@ -71,6 +86,10 @@ import type {
   JobRecommendation,
   // 【P5 新增】用户求职画像类型
   JobProfile,
+  // 【知识库文件解析】Excel 解析结果类型
+  ExcelParseResult,
+  // 【知识库文件解析】文档条目类型
+  KnowledgeDocumentItem,
 } from "../ai/index.js";
 
 /** 路由实例 */
@@ -83,6 +102,12 @@ const NO_KEY_MESSAGE =
 // 【P3 新增】知识库问答的 Key 提示（语义与简历分析略有差异）
 const NO_KEY_MESSAGE_KNOWLEDGE =
   "需先在个人中心配置 DeepSeek API Key 才能使用知识库问答";
+
+/** 知识库 Excel 上传中间件（内存存储，限制 10MB，防止超大文件耗尽内存） */
+const knowledgeUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+});
 
 /** 节点名称 → 中文提示的映射，用于 SSE 的 node 事件 */
 const NODE_LABELS: Record<string, string> = {
@@ -106,6 +131,42 @@ aiRouter.post("/knowledge/upload", authMiddleware, uploadKnowledge);
 
 // 【P3 新增】POST /api/ai/knowledge/ask — 知识库问答（需认证，SSE 返回）
 aiRouter.post("/knowledge/ask", authMiddleware, askKnowledge);
+
+// 【知识库文件解析】GET /api/ai/knowledge/template — 下载导入模板（需认证）
+aiRouter.get("/knowledge/template", authMiddleware, downloadTemplate);
+
+// 【知识库文件解析】GET /api/ai/knowledge/file — 下载上次上传的原始文件（需认证）
+aiRouter.get("/knowledge/file", authMiddleware, downloadKnowledgeFile);
+
+// 【知识库文件解析】GET /api/ai/knowledge/file-info — 查询文件元信息（需认证）
+aiRouter.get("/knowledge/file-info", authMiddleware, getFileInfo);
+
+// 【知识库文件解析】DELETE /api/ai/knowledge/file — 删除保存的原始文件记录（需认证）
+aiRouter.delete("/knowledge/file", authMiddleware, deleteFileInfo);
+
+// 【知识库文件解析】POST /api/ai/knowledge/import — 上传 Excel 解析入库（需认证）
+aiRouter.post(
+  "/knowledge/import",
+  authMiddleware,
+  knowledgeUpload.single("file"),
+  importKnowledge
+);
+
+// 【知识库文件解析】GET /api/ai/knowledge/documents — 列出知识条目（需认证）
+aiRouter.get("/knowledge/documents", authMiddleware, listKnowledgeDocuments);
+
+// 【知识库文件解析】DELETE /api/ai/knowledge/documents/:id — 删除知识条目（需认证）
+aiRouter.delete(
+  "/knowledge/documents/:id",
+  authMiddleware,
+  deleteKnowledgeDocument
+);
+
+// 【知识库文件解析】POST /api/ai/knowledge/parse-text — 文本解析成条目（需认证）
+aiRouter.post("/knowledge/parse-text", authMiddleware, parseTextKnowledge);
+
+// 【知识库文件解析】POST /api/ai/knowledge/batch — JSON 数组批量入库（需认证）
+aiRouter.post("/knowledge/batch", authMiddleware, batchImportKnowledge);
 
 // 【P4 新增】POST /api/ai/jobs/recommend — 职位发现 Agent 推荐（需认证，SSE 返回）
 aiRouter.post("/jobs/recommend", authMiddleware, recommendJobs);
@@ -327,6 +388,455 @@ async function uploadKnowledge(req: Request, res: Response): Promise<void> {
       message,
       code: "INGEST_FAILED",
     });
+  }
+}
+
+/**
+ * 【知识库文件解析】GET /api/ai/knowledge/template
+ *
+ * 下载知识库导入模板 .xlsx（表头：标题/检索词/分类/内容 + 示例行）。
+ * 首次使用时前端引导用户下载，用户本地维护一份文件反复上传。
+ */
+async function downloadTemplate(_req: Request, res: Response): Promise<void> {
+  const buffer = buildTemplate();
+  res.setHeader(
+    "Content-Type",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  );
+  res.setHeader(
+    "Content-Disposition",
+    'attachment; filename="knowledge-template.xlsx"'
+  );
+  res.send(buffer);
+}
+
+/**
+ * 【知识库文件解析】GET /api/ai/knowledge/file
+ *
+ * 下载用户上次上传的原始 Excel 文件（「文件真相源」），
+ * 用户在此基础上增删改后再上传，避免「重下空模板导致旧知识丢失」。
+ */
+async function downloadKnowledgeFile(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const userId = (req as { user?: { id?: string } }).user?.id ?? "";
+  if (!userId) {
+    res.status(401).json({
+      success: false,
+      message: "未登录，请先登录",
+      code: "UNAUTHORIZED",
+    });
+    return;
+  }
+
+  const file = await getKnowledgeFile(userId);
+  if (!file) {
+    res.status(404).json({
+      success: false,
+      message: "尚未上传过文件，请先下载模板填写后上传",
+      code: "NO_FILE",
+    });
+    return;
+  }
+
+  const downloadName = /\.xlsx?$/i.test(file.filename)
+    ? file.filename
+    : `${file.filename}.xlsx`;
+  res.setHeader(
+    "Content-Type",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  );
+  // filename 作兜底，filename* 用 UTF-8 编码支持中文文件名
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="knowledge.xlsx"; filename*=UTF-8''${encodeURIComponent(downloadName)}`
+  );
+  res.send(file.content);
+}
+
+/**
+ * 【知识库文件解析】GET /api/ai/knowledge/file-info
+ *
+ * 查询用户上传文件的元信息（轻量，不含字节），
+ * 前端据此判断「显示下载模板引导」还是「显示文件卡片」。
+ */
+async function getFileInfo(req: Request, res: Response): Promise<void> {
+  const userId = (req as { user?: { id?: string } }).user?.id ?? "";
+  if (!userId) {
+    res.status(401).json({
+      success: false,
+      message: "未登录，请先登录",
+      code: "UNAUTHORIZED",
+    });
+    return;
+  }
+
+  try {
+    const info = await getKnowledgeFileInfo(userId);
+    res.json({
+      success: true,
+      message: "查询成功",
+      data: info
+        ? { hasFile: true, filename: info.filename, updatedAt: info.updatedAt }
+        : { hasFile: false },
+    });
+  } catch (error) {
+    const message = (error as Error).message || "查询文件信息失败";
+    console.error("[AI] 查询文件信息失败:", message);
+    res.status(500).json({ success: false, message, code: "FILE_INFO_FAILED" });
+  }
+}
+
+/**
+ * 【知识库文件解析】DELETE /api/ai/knowledge/file
+ *
+ * 删除保存的原始文件记录（只删文件真相源，不动已入库的知识）。
+ * 删除后前端回到「下载模板」引导状态。
+ */
+async function deleteFileInfo(req: Request, res: Response): Promise<void> {
+  const userId = (req as { user?: { id?: string } }).user?.id ?? "";
+  if (!userId) {
+    res.status(401).json({
+      success: false,
+      message: "未登录，请先登录",
+      code: "UNAUTHORIZED",
+    });
+    return;
+  }
+
+  try {
+    const deleted = await deleteKnowledgeFile(userId);
+    res.json({
+      success: true,
+      message: deleted ? "文件已删除" : "暂无保存的文件",
+    });
+  } catch (error) {
+    const message = (error as Error).message || "删除文件失败";
+    console.error("[AI] 删除文件失败:", message);
+    res.status(500).json({ success: false, message, code: "FILE_DELETE_FAILED" });
+  }
+}
+
+/**
+ * 【知识库文件解析】POST /api/ai/knowledge/import
+ *
+ * 上传 Excel → 解析 → 校验 → 批量入库（replace/append）→ 保存原始文件。
+ * 请求体：multipart/form-data，file 字段 + mode 字段（replace/append）。
+ */
+async function importKnowledge(req: Request, res: Response): Promise<void> {
+  // ---------- 1. 用户校验 ----------
+  const userId = (req as { user?: { id?: string } }).user?.id ?? "";
+  if (!userId) {
+    res.status(401).json({
+      success: false,
+      message: "未登录，请先登录",
+      code: "UNAUTHORIZED",
+    });
+    return;
+  }
+
+  // ---------- 2. 文件校验（multer 无文件 / 非 xlsx） ----------
+  const file = (req as { file?: Express.Multer.File }).file;
+  if (!file) {
+    res.status(400).json({
+      success: false,
+      message: "请上传 Excel 文件",
+      code: "NO_FILE",
+    });
+    return;
+  }
+  const filename = file.originalname || "knowledge.xlsx";
+  if (!/\.xlsx?$/i.test(filename)) {
+    res.status(400).json({
+      success: false,
+      message: "仅支持 .xlsx 文件，请使用下载的模板",
+      code: "INVALID_FILE_TYPE",
+    });
+    return;
+  }
+
+  // mode 参数（multipart 文本字段，默认 replace=同步替换）
+  const mode: "replace" | "append" =
+    (req.body as { mode?: unknown })?.mode === "append" ? "append" : "replace";
+
+  // ---------- 3. 解析 + 校验 ----------
+  let parseResult: ExcelParseResult;
+  try {
+    parseResult = parseExcel(file.buffer);
+  } catch (error) {
+    const message = (error as Error).message || "Excel 解析失败";
+    res.status(400).json({ success: false, message, code: "PARSE_FAILED" });
+    return;
+  }
+
+  // 无有效条目：直接拒绝，绝不触发 replace 清空旧知识
+  if (parseResult.entries.length === 0) {
+    res.status(400).json({
+      success: false,
+      message: parseResult.failed.length
+        ? `文件中没有有效知识条目，共 ${parseResult.failed.length} 行校验失败`
+        : "文件中没有有效知识条目",
+      code: "NO_VALID_ENTRIES",
+      data: parseResult,
+    });
+    return;
+  }
+
+  // ---------- 4. 批量入库 + 保存原始文件 ----------
+  try {
+    const result = await ingestEntries(userId, parseResult.entries, mode);
+    await saveKnowledgeFile(userId, filename, file.buffer);
+
+    res.json({
+      success: true,
+      message: mode === "replace" ? "同步替换成功" : "追加入库成功",
+      data: {
+        documentCount: result.documentCount,
+        chunkCount: result.chunkCount,
+        total: parseResult.total,
+        failed: parseResult.failed,
+      },
+    });
+  } catch (error) {
+    const message = (error as Error).message || "知识入库失败";
+    console.error("[AI] 知识库批量入库失败:", message);
+    res.status(500).json({ success: false, message, code: "INGEST_FAILED" });
+  }
+}
+
+/**
+ * 【知识库文件解析】GET /api/ai/knowledge/documents
+ *
+ * 列出当前用户的所有知识库文档（标题/分类/检索词/分块数/入库时间），
+ * 供「我的知识」列表展示。
+ */
+async function listKnowledgeDocuments(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const userId = (req as { user?: { id?: string } }).user?.id ?? "";
+  if (!userId) {
+    res.status(401).json({
+      success: false,
+      message: "未登录，请先登录",
+      code: "UNAUTHORIZED",
+    });
+    return;
+  }
+
+  try {
+    const documents = await listDocuments(userId);
+    res.json({ success: true, message: "查询成功", data: documents });
+  } catch (error) {
+    const message = (error as Error).message || "查询知识库失败";
+    console.error("[AI] 查询知识库文档失败:", message);
+    res.status(500).json({ success: false, message, code: "LIST_FAILED" });
+  }
+}
+
+/**
+ * 【知识库文件解析】DELETE /api/ai/knowledge/documents/:id
+ *
+ * 删除单条知识文档（仅限本人，级联删除其 chunks）。
+ */
+async function deleteKnowledgeDocument(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const userId = (req as { user?: { id?: string } }).user?.id ?? "";
+  const documentId = (req.params as { id?: string })?.id ?? "";
+
+  if (!userId) {
+    res.status(401).json({
+      success: false,
+      message: "未登录，请先登录",
+      code: "UNAUTHORIZED",
+    });
+    return;
+  }
+  if (!documentId) {
+    res.status(400).json({
+      success: false,
+      message: "缺少文档 ID",
+      code: "INVALID_ID",
+    });
+    return;
+  }
+
+  try {
+    const deleted = await deleteDocument(userId, documentId);
+    if (!deleted) {
+      res.status(404).json({
+        success: false,
+        message: "文档不存在或无权删除",
+        code: "NOT_FOUND",
+      });
+      return;
+    }
+    res.json({ success: true, message: "删除成功" });
+  } catch (error) {
+    const message = (error as Error).message || "删除失败";
+    console.error("[AI] 删除知识库文档失败:", message);
+    res.status(500).json({ success: false, message, code: "DELETE_FAILED" });
+  }
+}
+
+/**
+ * 【知识库文件解析】POST /api/ai/knowledge/parse-text
+ *
+ * 把用户粘贴的文本解析成结构化知识条目。
+ * 先规则解析（免费）；规则解析无结果且 useLLM=true 时用 LLM 兜底解析。
+ *
+ * 请求体：{ "text": "粘贴的文本", "useLLM": true }
+ * 响应体：{ success, data: { entries, needLLM } }
+ */
+async function parseTextKnowledge(req: Request, res: Response): Promise<void> {
+  const userId = (req as { user?: { id?: string } }).user?.id ?? "";
+  if (!userId) {
+    res.status(401).json({
+      success: false,
+      message: "未登录，请先登录",
+      code: "UNAUTHORIZED",
+    });
+    return;
+  }
+
+  const body = (req.body ?? {}) as { text?: unknown; useLLM?: unknown };
+  const text = typeof body.text === "string" ? body.text.trim() : "";
+  const useLLM = body.useLLM === true;
+
+  if (!text) {
+    res.status(400).json({
+      success: false,
+      message: "请粘贴要解析的文本",
+      code: "INVALID_TEXT",
+    });
+    return;
+  }
+
+  // ---------- 1. 规则解析（免费） ----------
+  let entries = parseTextToEntries(text);
+
+  // ---------- 2. 规则解析无结果且允许 LLM → 兜底 ----------
+  if (entries.length === 0 && useLLM) {
+    let apiKey = "";
+    try {
+      apiKey = await getDecryptedKey(userId);
+    } catch (error) {
+      console.error("[AI] 读取 API Key 失败:", (error as Error).message);
+      res.status(500).json({
+        success: false,
+        message: "读取 API Key 失败，请稍后重试",
+        code: "KEY_READ_FAILED",
+      });
+      return;
+    }
+    if (!apiKey) {
+      res.status(403).json({
+        success: false,
+        message: "需先在个人中心配置 DeepSeek API Key 才能使用 AI 智能解析",
+        code: "DEEPSEEK_KEY_NOT_CONFIGURED",
+      });
+      return;
+    }
+
+    try {
+      entries = await parseTextWithLLM(text, apiKey);
+    } catch (error) {
+      const message = (error as Error).message || "AI 解析失败";
+      console.error("[AI] 文本 AI 解析失败:", message);
+      res.status(502).json({
+        success: false,
+        message,
+        code: "PARSE_LLM_FAILED",
+      });
+      return;
+    }
+  }
+
+  // ---------- 3. 仍无结果 → 提示可开启 AI 解析 ----------
+  if (entries.length === 0) {
+    res.json({
+      success: true,
+      message: "未识别到结构化条目，可尝试勾选「AI 智能解析」",
+      data: { entries: [], needLLM: true },
+    });
+    return;
+  }
+
+  res.json({
+    success: true,
+    message: `解析出 ${entries.length} 条知识`,
+    data: { entries, needLLM: false },
+  });
+}
+
+/**
+ * 【知识库文件解析】POST /api/ai/knowledge/batch
+ *
+ * JSON 数组批量入库（文本解析确认后调用）。
+ * 请求体：{ "entries": [{ title, content, keywords?, category? }], "mode": "replace" | "append" }
+ */
+async function batchImportKnowledge(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const userId = (req as { user?: { id?: string } }).user?.id ?? "";
+  if (!userId) {
+    res.status(401).json({
+      success: false,
+      message: "未登录，请先登录",
+      code: "UNAUTHORIZED",
+    });
+    return;
+  }
+
+  const body = (req.body ?? {}) as { entries?: unknown; mode?: unknown };
+  const rawEntries = Array.isArray(body.entries) ? body.entries : [];
+  const mode: "replace" | "append" =
+    body.mode === "append" ? "append" : "replace";
+
+  // 规整条目：只保留 title/content 为字符串的合法条目
+  const entries = rawEntries
+    .map((e) => e as Record<string, unknown>)
+    .filter(
+      (e) =>
+        typeof e?.title === "string" &&
+        (e.title as string).trim() &&
+        typeof e?.content === "string" &&
+        (e.content as string).trim()
+    )
+    .map((e) => ({
+      title: (e.title as string).trim(),
+      content: (e.content as string).trim(),
+      keywords: typeof e.keywords === "string" ? (e.keywords as string).trim() : undefined,
+      category: typeof e.category === "string" ? (e.category as string).trim() : undefined,
+    }));
+
+  if (entries.length === 0) {
+    res.status(400).json({
+      success: false,
+      message: "没有可入库的有效条目",
+      code: "NO_VALID_ENTRIES",
+    });
+    return;
+  }
+
+  try {
+    const result = await ingestEntries(userId, entries, mode);
+    res.json({
+      success: true,
+      message: mode === "replace" ? "同步替换成功" : "追加入库成功",
+      data: {
+        documentCount: result.documentCount,
+        chunkCount: result.chunkCount,
+      },
+    });
+  } catch (error) {
+    const message = (error as Error).message || "知识入库失败";
+    console.error("[AI] 批量入库失败:", message);
+    res.status(500).json({ success: false, message, code: "INGEST_FAILED" });
   }
 }
 

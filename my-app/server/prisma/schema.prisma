@@ -128,12 +128,28 @@ model Document {
   userId    String   @map("user_id")
   title     String   @map("title")
   content   String   @map("content")          // 原始全文（保留，供溯源）
+  keywords  String?  @map("keywords")          // 逗号分隔检索词（提升检索命中，选填）
+  category  String?  @map("category")          // 分类标签（如「前端/React」，选填）
   createdAt DateTime @default(now()) @map("created_at")
 
   chunks    Chunk[]
 
   @@index([userId])
   @@map("documents")
+}
+
+// 【知识库文件真相源】============================================
+// KnowledgeFile 模型 —— 用户上次上传的原始 Excel 文件
+// ============================================
+/// 用户上次上传的原始 Excel 文件（供「下载上次文件」继续编辑）
+model KnowledgeFile {
+  id        String   @id @default(uuid()) @map("id")
+  userId    String   @unique @map("user_id")
+  filename  String   @map("filename")
+  content   Bytes    @map("content")          // 原始 .xlsx 字节
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("knowledge_files")
 }
 
 // 【P3 新增】============================================

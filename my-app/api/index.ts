@@ -24,8 +24,25 @@ export {
 } from "./modules/user";
 
 // 个人知识库模块（RAG）
-export { uploadKnowledgeApi, askKnowledgeStream } from "./modules/knowledge";
-export type { KnowledgeAskHandlers } from "./modules/knowledge";
+export {
+  uploadKnowledgeApi,
+  askKnowledgeStream,
+  downloadKnowledgeTemplate,
+  downloadKnowledgeFile,
+  getKnowledgeFileInfoApi,
+  deleteKnowledgeFileApi,
+  importKnowledgeFromFile,
+  listKnowledgeDocuments,
+  deleteKnowledgeDocument,
+  parseTextToEntriesApi,
+  batchImportEntries,
+} from "./modules/knowledge";
+export type {
+  KnowledgeAskHandlers,
+  DownloadResult,
+  ParseTextResult,
+  KnowledgeFileInfoResult,
+} from "./modules/knowledge";
 
 // 职位发现模块（ReAct Agent）
 export { recommendJobsStream } from "./modules/jobs";
@@ -55,6 +72,9 @@ export type {
   RegisterParams,
   RetrievedChunk,
   UploadResult,
+  KnowledgeDocument,
+  ImportResult,
+  KnowledgeEntry,
   JobProfile,
   JobRecommendation,
   JobRecommendationItem,
