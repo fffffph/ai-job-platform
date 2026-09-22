@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<!--
+  ============================================
+  子应用入口 HTML 壳（qiankun 专用）
+  ============================================
+
+  【为什么需要这个文件】
+  1. qiankun 的 loadMicroApp({ entry: '/resume-optimizer/' }) 用的是
+     import-html-entry 机制：先 fetch 这个 URL 得到一个 HTML，
+     再从 HTML 里提取 <script> 标签，下载并执行其中的 JS。
+  2. 但子应用是 Vite【库模式】构建（vite.config.ts → build.lib），
+     产物只有一个 dist/index.js（UMD），Vite 库模式不会生成 index.html。
+  3. 所以这里手工提供一个最小 HTML，唯一作用就是"把 UMD 包引进来"。
+
+  【script src 为什么用绝对路径】
+  写成 /resume-optimizer/index.js（带前缀）而不是 ./index.js，
+  因为 qiankun 会按 HTML 的 URL 作为 base 去解析相对路径；
+  用绝对路径最稳，任何路由层级下都能正确解析。
+
+  【不要在这里引 React】
+  早期方案想过 <script src="react.js"> 提供全局 React 给外部化的 UMD 用，
+  但 React 19 已移除官方 UMD 构建，且子应用用的是 react-dom/client，
+  外部化方案不可靠。现在 UMD 自带 React（见 vite.config.ts 注释），
+  所以这里只需要一个 script。
+-->
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>resume-optimizer</title>
+  </head>
+  <body>
+    <!--
+      #root 是子应用独立运行（非 qiankun 环境）时的挂载点。
+      被 qiankun 加载时，main.tsx 会用 props.container 里的容器，
+      这个 div 不会被用到，但保留它无害且便于单独调试子应用。
+    -->
+    <div id="root"></div>
+
+    <!--
+      【重要】process polyfill
+      Vite 库模式（lib mode）不应用 define 替换，导致 UMD 包里残留
+      大量 process.env.NODE_ENV / process.hrtime / process.nextTick 等
+      Node-only 引用（实测 246 处）。浏览器没有 process 全局对象，
+      运行时直接抛 "ReferenceError: process is not defined"，
+      微前端整个挂载失败（qiankun 子应用成为空白）。
+
+      把 process 全套 API 都 polyfill 成浏览器可用的桩函数。
+      必须早于 UMD 包执行（<script> 顺序保证）。
+
+      仅在子应用 iframe / qiankun 容器内生效，不污染主应用。
+    -->
+    <script>
+      (function () {
+        var __noop = function () {};
+        window.process = {
+          env: {
+            NODE_ENV: 'production',
+            BASE_URL: '/'
+          },
+          // Node API stubs（vite lib 模式漏出来的引用）
+          nextTick: function (cb) { Promise.resolve().then(cb); },
+          hrtime: function () { return [Date.now(), 0]; },
+          uptime: function () { return 0; },
+          emit: __noop,
+          chdir: __noop,
+          binding: function () { return {}; },
+          cwd: function () { return '/'; },
+          platform: 'browser',
+          version: '',
+          versions: {},
+          arch: 'x64',
+          pid: 1,
+          ppid: 0,
+          title: 'browser',
+          argv: [],
+          execArgv: [],
+          execPath: '/',
+          debugPort: 0,
+          allowedNodeEnvironmentFlags: new Set(),
+          features: {},
+          noDeprecation: false,
+          traceDeprecation: false,
+          throwDeprecation: false,
+          noWarnings: false,
+          umask: function () { return 0; },
+          dlopen: __noop,
+          getActiveResourcesInfo: function () { return []; },
+          memoryUsage: function () {
+            return { rss: 0, heapTotal: 0, heapUsed: 0, external: 0, arrayBuffers: 0 };
+          }
+        };
+      })();
+    </script>
+
+    <!-- UMD 包：执行后会把生命周期钩子挂到 window['resume-optimizer'] -->
+    <script src="/resume-optimizer/index.js"></script>
+  </body>
+</html>

@@ -1,0 +1,40 @@
+{
+  /**
+   * ============================================
+   * TypeScript 编译配置 —— Express 后端服务
+   * ============================================
+   *
+   * 【编译目标】
+   * - target: ES2022 — 使用现代 JS 特性（顶层 await、私有字段等）
+   * - module: NodeNext — 适配 Node.js ESM 模块系统（package.json type: "module"）
+   * - moduleResolution: NodeNext — 配套的模块解析策略
+   *
+   * 【输出配置】
+   * - outDir: dist — TypeScript 编译产物输出到 dist/ 目录
+   * - rootDir: src — 源码根目录
+   *
+   * 【严格模式】
+   * - strict: true — 启用所有严格类型检查
+   * - esModuleInterop: true — 允许 import 兼容 CommonJS 模块
+   * - skipLibCheck: true — 跳过 .d.ts 文件检查，加速编译
+   */
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+
+    "outDir": "./dist",
+    "rootDir": "./src",
+
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

@@ -1,0 +1,31 @@
+{
+  "name": "resume-optimizer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI简历优化 - 微前端子应用。作为 qiankun 子应用独立部署，提供简历上传、解析、AI优化建议等完整功能。",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@ant-design/icons": "^6.2.3",
+    "antd": "^6.4.0",
+    "axios": "^1.18.1",
+    "docx": "^9.7.1",
+    "framer-motion": "^12.38.0",
+    "html2pdf.js": "^0.14.0",
+    "qiankun": "^2.10.16",
+    "react": "^19",
+    "react-dom": "^19"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.1",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^4.3.0",
+    "typescript": "^5",
+    "vite": "^6.0.0",
+    "vite-plugin-qiankun": "^1.0.15"
+  }
+}
