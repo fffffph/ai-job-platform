@@ -33,9 +33,9 @@ const MicroAppLoader = dynamic(
         justifyContent: 'center',
         alignItems: 'center',
         minHeight: '100vh',
-        background: 'var(--background, #f5f5f5)',
+        background: 'var(--background)',
         fontSize: '14px',
-        color: 'var(--muted-foreground, #999)',
+        color: 'var(--muted-foreground)',
       }}>
         正在准备 AI 简历优化模块...
       </div>

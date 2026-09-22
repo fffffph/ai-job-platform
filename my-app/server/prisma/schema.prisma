@@ -1,0 +1,171 @@
+/**
+ * ============================================
+ * Prisma Schema —— 数据库模型定义（Prisma 7）
+ * ============================================
+ *
+ * 【Prisma 7 变更说明】
+ * datasource 块中不再支持 `url` 属性。
+ * 数据库连接 URL 通过 prisma.config.ts 配置（迁移时使用）
+ * 和 PrismaClient 构造函数的 datasourceUrl 参数（运行时使用）。
+ *
+ * 【迁移命令（Prisma 7）】
+ * npx prisma migrate dev --name init   → 创建数据库表（读取 prisma.config.ts 的 URL）
+ * npx prisma generate                   → 生成 Prisma Client 类型
+ * npx prisma studio                     → 打开数据库可视化界面
+ *
+ * @see https://pris.ly/d/config-datasource
+ */
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+/**
+ * 数据源：PostgreSQL
+ *
+ * Prisma 7 中 url 配置已移至 prisma.config.ts 和 PrismaClient 构造函数。
+ * 此 datasource 块仅声明数据库类型。
+ */
+datasource db {
+  provider = "postgresql"
+}
+
+/**
+ * ============================================
+ * User 模型 —— 用户表
+ * ============================================
+ *
+ * 【字段说明】
+ * - id        : UUID 主键，自动生成，全局唯一
+ * - email     : 邮箱，唯一索引，用于登录
+ * - password  : 密码哈希（bcrypt 加密后的密文，不存储明文！）
+ * - name      : 用户昵称/姓名，可选
+ * - avatar    : 头像图片 URL，null 时前端用首字母占位
+ * - bio       : 个人简介，可选
+ * - createdAt : 注册时间，自动生成
+ * - updatedAt : 最后更新时间，Prisma 自动管理
+ *
+ * 【安全设计】
+ * 密码字段不存储明文！注册时通过 bcrypt.hash() 加密后存入数据库，
+ * 登录时通过 bcrypt.compare() 比对明文与密文。
+ *
+ * 【索引说明】
+ * @@unique([email]) — 邮箱唯一约束，确保同一邮箱只能注册一次
+ *                     同时自动创建索引，加速按邮箱查询
+ */
+model User {
+  id        String   @id @default(uuid()) @map("id")
+  email     String   @unique @map("email")
+  password  String   @map("password")
+  name      String?  @map("name")
+  avatar    String?  @map("avatar")
+  bio       String?  @map("bio")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  /**
+   * DeepSeek API Key 密文（用户自行配置，服务端 AES-256-GCM 加密后存储）
+   * - 明文绝不入库、绝不写日志、绝不返回前端
+   * - 按用户隔离，只有本用户能通过认证接口读写
+   * - null 表示未配置
+   */
+  deepseekKeyCipher    String?  @map("deepseek_key_cipher")
+  /** DeepSeek API Key 最后配置/更新时间 */
+  deepseekKeyUpdatedAt DateTime? @map("deepseek_key_updated_at")
+
+  /**
+   * SiliconFlow（硅基流动）API Key 密文（用户自行配置，服务端 AES-256-GCM 加密后存储）
+   * 用于知识库 RAG 的 Embedding 向量化，与 DeepSeek Key 一样按用户隔离加密存储
+   */
+  siliconflowKeyCipher    String?  @map("siliconflow_key_cipher")
+  /** SiliconFlow API Key 最后配置/更新时间 */
+  siliconflowKeyUpdatedAt DateTime? @map("siliconflow_key_updated_at")
+
+  // 【P5 新增】用户求职画像（1:1，用于职位推荐的个性化记忆）
+  profile UserProfile?
+
+  @@map("users")
+}
+
+// 【P5 新增】============================================
+// UserProfile 模型 —— 用户求职画像
+// ============================================
+/**
+ * 用户求职画像（Memory 层的结构化记忆）
+ *
+ * 存储用户的求职偏好，供职位发现 Agent 做个性化推荐时读取，
+ * 实现「跨轮记忆」——用户首次填写求职意向后，下次无需重复输入。
+ *
+ * 【字段说明】
+ * - city           : 期望城市（如 "西安"）
+ * - skills         : 技能栈（如 "React,TypeScript,微前端,Node.js"）
+ * - expectedSalary : 期望薪资（如 "12k-18k"）
+ * - jobTitle       : 求职方向/岗位（如 "前端开发工程师"）
+ *
+ * 【1:1 关系】
+ * 每个用户至多一条画像记录，userId 唯一索引保证。
+ */
+model UserProfile {
+  id             String   @id @default(uuid()) @map("id")
+  userId         String   @unique @map("user_id")
+  jobTitle       String?  @map("job_title")
+  city           String?  @map("city")
+  skills         String?  @map("skills")
+  expectedSalary String?  @map("expected_salary")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_profiles")
+}
+
+// 【P3 新增】============================================
+// Document 模型 —— 知识库文档
+// ============================================
+/// 知识库文档（用户上传的面试题/JD/笔记等）
+model Document {
+  id        String   @id @default(uuid()) @map("id")
+  userId    String   @map("user_id")
+  title     String   @map("title")
+  content   String   @map("content")          // 原始全文（保留，供溯源）
+  keywords  String?  @map("keywords")          // 逗号分隔检索词（提升检索命中，选填）
+  category  String?  @map("category")          // 分类标签（如「前端/React」，选填）
+  createdAt DateTime @default(now()) @map("created_at")
+
+  chunks    Chunk[]
+
+  @@index([userId])
+  @@map("documents")
+}
+
+// 【知识库文件真相源】============================================
+// KnowledgeFile 模型 —— 用户上次上传的原始 Excel 文件
+// ============================================
+/// 用户上次上传的原始 Excel 文件（供「下载上次文件」继续编辑）
+model KnowledgeFile {
+  id        String   @id @default(uuid()) @map("id")
+  userId    String   @unique @map("user_id")
+  filename  String   @map("filename")
+  content   Bytes    @map("content")          // 原始 .xlsx 字节
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("knowledge_files")
+}
+
+// 【P3 新增】============================================
+// Chunk 模型 —— 文档分块（含向量）
+// ============================================
+/// 文档分块（含向量）
+model Chunk {
+  id          String   @id @default(uuid()) @map("id")
+  documentId  String   @map("document_id")
+  chunkIndex  Int      @map("chunk_index")     // 分块序号，用于溯源定位
+  content     String   @map("content")          // 分块文本
+  embedding   Unsupported("vector(1024)")?      // 1024 维向量（bge-m3）
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  document    Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+  @@map("chunks")
+}

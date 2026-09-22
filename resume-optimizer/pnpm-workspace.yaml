@@ -1,2 +1,8 @@
 allowBuilds:
-  esbuild: false
+  core-js: set this to true or false
+# pnpm 11 安全配置：白名单允许这些包运行 postinstall 脚本
+# （package.json 的 ppm.onlyBuiltDependencies 在 pnpm 11 已被废弃，
+#  改用 pnpm-workspace.yaml，这是 pnpm 11 唯一认可的方式）
+onlyBuiltDependencies:
+  - esbuild
+  - core-js

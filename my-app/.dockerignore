@@ -1,0 +1,51 @@
+# ============================================
+# .dockerignore —— 构建上下文黑名单
+# ============================================
+# 作用类似 .gitignore：执行 docker build 时，Docker 会把"上下文目录"
+# （通常就是项目根目录）打包发送给 Docker 引擎。
+# 把这些目录排除掉，能显著加快构建（本项目 node_modules 几百 MB）。
+#
+# ⚠️ 特别注意：被 ignore 的文件在 Dockerfile 里是 COPY 不到的！
+
+# 依赖目录（会在容器内重新安装，不需要宿主机的）
+node_modules
+.pnpm-store
+
+# 构建产物（容器内会重新构建）
+.next
+out
+dist
+build
+
+# 版本控制
+.git
+.gitignore
+
+# 环境变量（密钥绝不进镜像！镜像层是可被反推的）
+.env
+.env.local
+.env.*.local
+.env.docker
+
+# 日志与缓存
+npm-debug.log*
+yarn-error.log*
+.pnpm-debug.log
+*.log
+
+# 编辑器 / 操作系统
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# 测试与文档（不参与运行时）
+coverage
+*.test.ts
+*.test.tsx
+*.spec.ts
+README.md
+
+# 本地开发残留
+.turbo
+.vercel

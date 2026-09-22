@@ -1,0 +1,175 @@
+# ============================================
+# docker-compose.yml —— CareerAI 一键编排
+# ============================================
+#
+# 【compose 是干什么的】
+# 手写一个个项目 docker build / docker run 要敲一堆参数。
+# compose 用一个 YAML 文件描述"有哪些服务、怎么连、谁先启动"，
+# 之后一条 `docker compose up -d` 全部搞定。
+#
+# 【服务清单】
+#   postgres  数据库（仅内网）
+#   server    Express 后端 API（仅内网）
+#   web       Next.js 主应用（仅内网）
+#   subapp    子应用静态资源（仅内网）
+#   nginx     统一入口（唯一对外端口 8080）
+#
+# 【网络说明】
+# 所有服务加入同一个自定义网络 app-net，
+# 彼此用"服务名"当主机名互相访问（Docker 内置 DNS 自动解析）：
+#   例如 server 容器里访问数据库用 postgres:5432
+#   例如 nginx 转发主应用用 http://web:3000
+# 这就是 nginx.conf 里 upstream 写 server web:3000 能生效的原因。
+# ============================================
+
+services:
+  # ==========================================
+  # 1. 数据库
+  # ==========================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: careerai-postgres
+
+    # env_file：把文件里的变量注入容器（不在 compose 里写死密钥）
+    env_file:
+      - .env.docker
+
+    volumes:
+      # named volume（不是宿主机目录）：
+      # 由 Docker 管理的持久化存储，容器删了数据还在。
+      # 对比：./data:/var/lib/postgresql/data 是 bind mount，
+      # 在 Windows 上容易有权限和性能问题，所以数据库优先用 named volume
+      - pgdata:/var/lib/postgresql/data
+
+    # ------------------------------------------------------------
+    # 健康检查：告诉 compose "这个服务什么时候才算真的可用"
+    # ------------------------------------------------------------
+    # 为什么需要：postgres 容器进程启动 ≠ 数据库能接受连接，
+    # 中间有约 2~5 秒初始化。如果 server 立刻启动并连数据库，
+    # 会报 "connection refused" 然后崩溃重启。
+    # 有了 healthcheck，server 的 depends_on condition: service_healthy
+    # 会等 postgres 真正就绪再启动，彻底避免这个竞态。
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+    networks:
+      - app-net
+    restart: unless-stopped
+
+  # ==========================================
+  # 2. 后端 Express API
+  # ==========================================
+  server:
+    build:
+      context: ./my-app/server
+      dockerfile: Dockerfile
+    container_name: careerai-server
+
+    environment:
+      # 数据库连接串。
+      # 注意主机名是 postgres（服务名），不是 localhost！
+      # 在容器里 localhost 指的是"自己这个容器"，
+      # 写 localhost 会连不上数据库 —— 这是最常见的容器化错误。
+      DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/careerai?schema=public"
+      PORT: 4000
+      NODE_ENV: production
+
+    # 密钥类变量从文件注入，不写死在 compose 里
+    env_file:
+      - .env.docker
+
+    depends_on:
+      postgres:
+        # 等数据库"健康"了再启动（光 started 不够，见上面 healthcheck 注释）
+        condition: service_healthy
+
+    networks:
+      - app-net
+    restart: unless-stopped
+
+  # ==========================================
+  # 3. 主应用 Next.js
+  # ==========================================
+  web:
+    build:
+      context: ./my-app
+      dockerfile: Dockerfile
+      # ------------------------------------------------------------
+      # 构建参数（build arg）
+      # ------------------------------------------------------------
+      # NEXT_PUBLIC_* 变量在 build 阶段就被硬编码进浏览器产物，
+      # 必须用 args 传，运行时的 environment 对它无效！
+      # 传空字符串 = axios 用相对路径 → 请求走同源 → nginx 转发到后端
+      args:
+        NEXT_PUBLIC_API_URL: ""
+    container_name: careerai-web
+
+    environment:
+      NODE_ENV: production
+
+    depends_on:
+      - server
+
+    networks:
+      - app-net
+    restart: unless-stopped
+
+  # ==========================================
+  # 4. 子应用静态资源
+  # ==========================================
+  subapp:
+    build:
+      context: ./resume-optimizer
+      dockerfile: Dockerfile
+    container_name: careerai-subapp
+
+    networks:
+      - app-net
+    restart: unless-stopped
+
+  # ==========================================
+  # 5. 入口 nginx（唯一对外暴露的服务）
+  # ==========================================
+  nginx:
+    image: nginx:alpine
+    container_name: careerai-nginx
+
+    ports:
+      # 格式 "宿主机端口:容器端口"
+      # 8080 可改成任意空闲端口，例如 80 或 3000
+      - "8080:80"
+
+    volumes:
+      # 挂载配置文件（:ro 表示只读，防止容器篡改宿主机文件）
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./proxy_headers.conf:/etc/nginx/conf.d/proxy_headers.conf:ro
+
+    depends_on:
+      - web
+      - server
+      - subapp
+
+    networks:
+      - app-net
+    restart: unless-stopped
+
+# ==========================================
+# 自定义网络
+# ==========================================
+# 不指定 driver 默认就是 bridge。
+# 所有服务在同一网络内可以互相用服务名访问。
+networks:
+  app-net:
+    driver: bridge
+
+# ==========================================
+# 数据卷
+# ==========================================
+# 这里声明上面 volumes 用到的 named volume。
+# docker compose down 不会删除它，数据保留；
+# 只有 docker compose down -v 才会连数据一起清掉。
+volumes:
+  pgdata:

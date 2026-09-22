@@ -18,6 +18,19 @@ import type { NextConfig } from "next";
  * 子应用（localhost:3001）→ fetch('/api/chat')          → Vite proxy 转发 → 主应用（localhost:3000）
  */
 const nextConfig: NextConfig = {
+  /**
+   * standalone 输出模式 —— Docker 部署的关键配置
+   *
+   * 默认产物依赖完整 node_modules（本项目几百 MB）。standalone 模式
+   * 会在 .next/standalone/ 下生成"自包含"产物：
+   *   - 只打包运行时真正用到的依赖（体积大幅缩减）
+   *   - 产出 server.js，直接 `node server.js` 启动，不需要 next start
+   *
+   * ⚠️ 注意：standalone 不会自动复制 public/ 和 .next/static/，
+   *    这两个目录需在 Dockerfile 中手动 COPY（见 my-app/Dockerfile 注释）。
+   */
+  output: 'standalone',
+
   experimental: {
     serverActions: {
       // 支持最大 10MB 的文件上传（简历文件解析需要）
