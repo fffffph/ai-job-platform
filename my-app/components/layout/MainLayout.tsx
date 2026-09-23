@@ -41,6 +41,7 @@
  * key='2' → /dashboard/jobs     → 职位发现（主应用）
  * key='3' → /dashboard/resume   → 简历优化（qiankun 子应用 ★）
  * key='4' → /dashboard/profile  → 个人中心（主应用）
+ * key='5' → /dashboard/history  → 决策历史（主应用，P6 Trace 落库后）
  *
  * 用户点击"简历优化"菜单时，router.push('/dashboard/resume')
  * 对应的 page.tsx 通过 dynamic import 加载 MicroAppLoader，
@@ -59,7 +60,8 @@ import {
   SunOutlined,
   MoonOutlined,
   MenuFoldOutlined,
-  MenuUnfoldOutlined
+  MenuUnfoldOutlined,
+  HistoryOutlined
 } from '@ant-design/icons';
 import { useRouter, usePathname } from 'next/navigation';
 import { useTheme } from 'next-themes';
@@ -110,6 +112,10 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
       case '4':
         router.push('/dashboard/profile');
         break;
+      case '5':
+        // AI 决策历史（P6 Trace 落库后的历史回放入口）
+        router.push('/dashboard/history');
+        break;
     }
     if (isMobile) {
       setCollapsed(true);
@@ -125,6 +131,7 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
     if (pathname === '/dashboard/jobs') return ['2'];
     if (pathname === '/dashboard/resume') return ['3']; // ★ 子应用路由
     if (pathname === '/dashboard/profile') return ['4'];
+    if (pathname === '/dashboard/history') return ['5'];
     return ['1'];
   };
 
@@ -179,6 +186,7 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
               // 子应用通过 MicroAppLoader → loadMicroApp 动态挂载
             },
             { key: '4', icon: <UserOutlined />, label: '个人中心' },
+            { key: '5', icon: <HistoryOutlined />, label: '决策历史' },
           ]}
         />
       </Sider>

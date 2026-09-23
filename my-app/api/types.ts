@@ -253,6 +253,46 @@ export interface TraceEvent {
   timestamp: string;
 }
 
+// ========== AI Trace 历史（P6 落库后新增） ==========
+
+/** AI 执行的图类型：简历分析 / 知识库问答 / 职位发现 */
+export type TraceRunType = "resume" | "rag" | "jobs";
+
+/** AI 执行状态 */
+export type TraceRunStatus = "success" | "error";
+
+/**
+ * 历史列表项（不含事件详情，轻量）。
+ * 对应后端 GET /api/ai/trace/runs 返回的 data 元素。
+ */
+export interface TraceRunListItem {
+  /** run 唯一 ID */
+  id: string;
+  /** 图类型：resume / rag / jobs */
+  type: string;
+  /** 执行状态：success / error */
+  status: string;
+  /** 节点数量 */
+  nodeCount: number;
+  /** 总耗时（毫秒，各节点耗时之和） */
+  totalDurationMs: number;
+  /** 执行创建时间（ISO 8601 字符串） */
+  createdAt: string;
+}
+
+/**
+ * 单次执行的完整详情（含按顺序排列的节点事件）。
+ * 对应后端 GET /api/ai/trace/runs/:id 返回的 data。
+ *
+ * 注意：events 里每个事件相比 TraceEvent 多了 id/runId/order/createdAt
+ * 等持久化字段，但前端回放只用到 TraceEvent 的 5 个字段，
+ * 结构赋值时多余字段被忽略，因此这里直接复用 TraceEvent。
+ */
+export interface TraceRunDetail extends TraceRunListItem {
+  /** 按执行顺序排列的节点事件 */
+  events: TraceEvent[];
+}
+
 /** 错误码对应的用户提示文案 */
 export const ERROR_MESSAGES: Record<string, string> = {
   [ErrorCode.EMAIL_EXISTS]: "该邮箱已被注册，请使用其他邮箱或直接登录",

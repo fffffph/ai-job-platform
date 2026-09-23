@@ -49,9 +49,15 @@ export {
   buildMatchMessage,
 } from "./prompts/tasks/resume/match.js";
 
-// Trace 骨架
-export { collectTrace, getTrace, clearTrace } from "./trace/tracer.js";
-export type { TraceEvent } from "./trace/tracer.js";
+// Trace 骨架（P6 落库版：ALS 隔离 + 持久化）
+export { collectTrace, runWithTrace } from "./trace/tracer.js";
+export type { TraceEvent, TraceRunResult } from "./trace/tracer.js";
+export { saveTraceRun, listTraceRuns, getTraceRun } from "./trace/persist.js";
+export type {
+  TraceRunType,
+  TraceRunStatus,
+  TraceRunListItem,
+} from "./trace/persist.js";
 
 // SSE 流式通道
 export { createSSEWriter } from "./stream/sse.js";

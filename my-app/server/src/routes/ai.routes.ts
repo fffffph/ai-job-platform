@@ -36,6 +36,7 @@
 
 import { Router, type IRouter } from "express";
 import type { Request, Response } from "express";
+import { randomUUID } from "node:crypto";
 import {
   SystemMessage,
   HumanMessage,
@@ -47,8 +48,10 @@ import multer from "multer";
 import {
   buildResumeGraph,
   createSSEWriter,
-  getTrace,
-  clearTrace,
+  runWithTrace,
+  saveTraceRun,
+  listTraceRuns,
+  getTraceRun,
   // 【P3 新增】RAG 相关能力
   ingestDocument,
   buildRagGraph,
@@ -90,6 +93,8 @@ import type {
   ExcelParseResult,
   // 【知识库文件解析】文档条目类型
   KnowledgeDocumentItem,
+  // 【P6 新增】trace 事件类型（落库辅助函数签名用）
+  TraceEvent,
 } from "../ai/index.js";
 
 /** 路由实例 */
@@ -108,6 +113,26 @@ const knowledgeUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 },
 });
+
+/**
+ * 【P6 新增】trace 落库的安全封装。
+ *
+ * 落库是「可观测性」的辅助能力，绝不允许因落库失败影响主流程：
+ * 任何异常都只 console.warn 告警，不向上抛出、不打断 SSE 响应。
+ */
+async function saveTraceRunSafely(
+  runId: string,
+  userId: string,
+  type: "resume" | "rag" | "jobs",
+  status: "success" | "error",
+  events: TraceEvent[]
+): Promise<void> {
+  try {
+    await saveTraceRun({ runId, userId, type, status, events });
+  } catch (error) {
+    console.warn("[AI-Trace] 落库失败:", (error as Error).message);
+  }
+}
 
 /** 节点名称 → 中文提示的映射，用于 SSE 的 node 事件 */
 const NODE_LABELS: Record<string, string> = {
@@ -177,6 +202,12 @@ aiRouter.get("/profile", authMiddleware, getProfile);
 // 【P5 新增】PUT /api/ai/profile — 保存用户求职画像（需认证，JSON 返回）
 aiRouter.put("/profile", authMiddleware, saveProfile);
 
+// 【P6 新增】GET /api/ai/trace/runs — 列出用户最近的 AI 执行记录（需认证，JSON 返回）
+aiRouter.get("/trace/runs", authMiddleware, listTraceRunRecords);
+
+// 【P6 新增】GET /api/ai/trace/runs/:id — 查询单次执行的完整决策过程（需认证，JSON 返回）
+aiRouter.get("/trace/runs/:id", authMiddleware, getTraceRunRecord);
+
 /**
  * 简历结构化分析处理器。
  *
@@ -241,84 +272,94 @@ async function analyzeResume(req: Request, res: Response): Promise<void> {
   // ---------- 阶段 2：进入 SSE 流式通道 ----------
   const sse = createSSEWriter(res);
 
-  // P1 的 trace 是全局内存单例，开始前清空，避免混入上一轮残留
-  clearTrace();
+  // 【P6】本次执行的唯一 ID（用于 trace 落库 + 历史回放）
+  const runId = randomUUID();
 
   try {
-    // 根据当前用户 Key 构建图（按请求构建，保证 Key 隔离）
-    const graph = buildResumeGraph(apiKey);
+    // 【P6】用 runWithTrace 包裹整段图执行：ALS 隔离收集节点级 trace 事件
+    const { result, events } = await runWithTrace(runId, async () => {
+      // 根据当前用户 Key 构建图（按请求构建，保证 Key 隔离）
+      const graph = buildResumeGraph(apiKey);
 
-    const initialState: ResumeState = {
-      resumeText: text,
-      jobDescription,
-      analysis: null,
-      match: null,
-      suggestions: [],
-      messages: [],
-    };
+      const initialState: ResumeState = {
+        resumeText: text,
+        jobDescription,
+        analysis: null,
+        match: null,
+        suggestions: [],
+        messages: [],
+      };
 
-    // 通知客户端开始执行 + 当前阶段提示
-    sse.send("meta", {
-      type: "start",
-      message: "开始分析简历",
-      hasJobDescription: Boolean(jobDescription),
-    });
-    sse.send("progress", {
-      stage: "analyze",
-      message: jobDescription
-        ? "正在分析简历并评估岗位匹配度…"
-        : "正在分析简历…",
-    });
+      // 通知客户端开始执行 + 当前阶段提示
+      sse.send("meta", {
+        type: "start",
+        message: "开始分析简历",
+        hasJobDescription: Boolean(jobDescription),
+      });
+      sse.send("progress", {
+        stage: "analyze",
+        message: jobDescription
+          ? "正在分析简历并评估岗位匹配度…"
+          : "正在分析简历…",
+      });
 
-    // 结构化输出为非流式，只用 updates 模式取节点完成时的结构化结果
-    const stream = await graph.stream(initialState, {
-      streamMode: "updates",
-    });
+      // 结构化输出为非流式，只用 updates 模式取节点完成时的结构化结果
+      const stream = await graph.stream(initialState, {
+        streamMode: "updates",
+      });
 
-    // 记录最终完整结果（从各节点 update 中取）
-    let finalAnalysis: ResumeAnalysis | null = null;
-    let finalMatch: MatchResult | null = null;
-    let finalSuggestions: string[] = [];
+      // 记录最终完整结果（从各节点 update 中取）
+      let finalAnalysis: ResumeAnalysis | null = null;
+      let finalMatch: MatchResult | null = null;
+      let finalSuggestions: string[] = [];
 
-    for await (const updates of stream) {
-      const updateMap = updates as Record<string, Partial<ResumeState>>;
+      for await (const updates of stream) {
+        const updateMap = updates as Record<string, Partial<ResumeState>>;
 
-      for (const [nodeName, update] of Object.entries(updateMap)) {
-        // 组装 node 事件，携带该节点的结构化结果
-        const nodeData: Record<string, unknown> = {
-          nodeName,
-          done: true,
-          message: NODE_LABELS[nodeName] ?? `节点 ${nodeName} 完成`,
-        };
+        for (const [nodeName, update] of Object.entries(updateMap)) {
+          // 组装 node 事件，携带该节点的结构化结果
+          const nodeData: Record<string, unknown> = {
+            nodeName,
+            done: true,
+            message: NODE_LABELS[nodeName] ?? `节点 ${nodeName} 完成`,
+          };
 
-        if (nodeName === "analyze") {
-          nodeData.analysis = update.analysis ?? null;
-          finalAnalysis = update.analysis ?? null;
-        } else if (nodeName === "match_assess") {
-          nodeData.match = update.match ?? null;
-          finalMatch = update.match ?? null;
-        } else if (nodeName === "suggest") {
-          nodeData.suggestions = update.suggestions ?? [];
-          finalSuggestions = update.suggestions ?? [];
+          if (nodeName === "analyze") {
+            nodeData.analysis = update.analysis ?? null;
+            finalAnalysis = update.analysis ?? null;
+          } else if (nodeName === "match_assess") {
+            nodeData.match = update.match ?? null;
+            finalMatch = update.match ?? null;
+          } else if (nodeName === "suggest") {
+            nodeData.suggestions = update.suggestions ?? [];
+            finalSuggestions = update.suggestions ?? [];
+          }
+
+          sse.send("node", nodeData);
         }
-
-        sse.send("node", nodeData);
       }
-    }
+
+      return { finalAnalysis, finalMatch, finalSuggestions };
+    });
 
     // 附带节点级 trace 事件 + 完成事件（含完整结构化结果）
-    sse.send("trace", { events: getTrace() });
+    sse.send("trace", { events });
     sse.send("done", {
       success: true,
       message: "分析完成",
-      analysis: finalAnalysis,
-      match: finalMatch,
-      suggestions: finalSuggestions,
+      analysis: result.finalAnalysis,
+      match: result.finalMatch,
+      suggestions: result.finalSuggestions,
     });
+
+    // 【P6】trace 落库（成功状态）
+    await saveTraceRunSafely(runId, userId, "resume", "success", events);
   } catch (error) {
     const message = (error as Error).message || "AI 分析失败";
     console.error("[AI] 简历分析失败:", message);
     sse.send("error", { success: false, message });
+    // 【P6】trace 落库（失败状态，无事件）
+    await saveTraceRunSafely(runId, userId, "resume", "error", []);
   } finally {
     // 无论成功失败都关闭 SSE 流，避免连接挂起
     sse.close();
@@ -906,70 +947,82 @@ async function askKnowledge(req: Request, res: Response): Promise<void> {
 
   // ---------- 阶段 2：进入 SSE 流式通道 ----------
   const sse = createSSEWriter(res);
-  clearTrace();
+
+  // 【P6】本次执行的唯一 ID（用于 trace 落库 + 历史回放）
+  const runId = randomUUID();
 
   try {
-    // 根据当前用户 Key 构建 RAG 图（按请求构建，保证 Key 隔离）
-    const graph = buildRagGraph(apiKey);
+    // 【P6】用 runWithTrace 包裹整段图执行：ALS 隔离收集节点级 trace 事件
+    const { result, events } = await runWithTrace(runId, async () => {
+      // 根据当前用户 Key 构建 RAG 图（按请求构建，保证 Key 隔离）
+      const graph = buildRagGraph(apiKey);
 
-    const initialState: RAGState = {
-      question,
-      userId,
-      chunks: [],
-      answer: "",
-    };
+      const initialState: RAGState = {
+        question,
+        userId,
+        chunks: [],
+        answer: "",
+      };
 
-    // 通知客户端开始执行
-    sse.send("meta", {
-      type: "start",
-      message: "开始知识库检索问答",
-    });
+      // 通知客户端开始执行
+      sse.send("meta", {
+        type: "start",
+        message: "开始知识库检索问答",
+      });
 
-    // 结构化输出为非流式，只用 updates 模式取节点完成时的结构化结果
-    const stream = await graph.stream(initialState, {
-      streamMode: "updates",
-    });
+      // 结构化输出为非流式，只用 updates 模式取节点完成时的结构化结果
+      const stream = await graph.stream(initialState, {
+        streamMode: "updates",
+      });
 
-    let finalChunks: RetrievedChunk[] = [];
-    let finalAnswer = "";
+      let finalChunks: RetrievedChunk[] = [];
+      let finalAnswer = "";
 
-    for await (const updates of stream) {
-      const updateMap = updates as Record<string, Partial<RAGState>>;
+      for await (const updates of stream) {
+        const updateMap = updates as Record<string, Partial<RAGState>>;
 
-      for (const [nodeName, update] of Object.entries(updateMap)) {
-        if (nodeName === "retrieve") {
-          finalChunks = update.chunks ?? [];
-          sse.send("node", {
-            nodeName: "retrieve",
-            done: true,
-            message: "知识库检索完成",
-            chunks: finalChunks,
-          });
-        } else if (nodeName === "generate") {
-          // 【P3 修正】节点名为 generate（图内避免与 state 字段 answer 冲突）
-          finalAnswer = update.answer ?? "";
-          sse.send("node", {
-            nodeName: "generate",
-            done: true,
-            message: "带引用回答生成完成",
-            answer: finalAnswer,
-          });
+        for (const [nodeName, update] of Object.entries(updateMap)) {
+          if (nodeName === "retrieve") {
+            finalChunks = update.chunks ?? [];
+            sse.send("node", {
+              nodeName: "retrieve",
+              done: true,
+              message: "知识库检索完成",
+              chunks: finalChunks,
+            });
+          } else if (nodeName === "generate") {
+            // 【P3 修正】节点名为 generate（图内避免与 state 字段 answer 冲突）
+            finalAnswer = update.answer ?? "";
+            sse.send("node", {
+              nodeName: "generate",
+              done: true,
+              message: "带引用回答生成完成",
+              answer: finalAnswer,
+            });
+          }
         }
       }
-    }
+
+      return { finalChunks, finalAnswer };
+    });
 
     // 附带节点级 trace 事件 + 完成事件（含完整结果）
-    sse.send("trace", { events: getTrace() });
+    sse.send("trace", { events });
     sse.send("done", {
       success: true,
       message: "回答完成",
-      answer: finalAnswer,
-      chunks: finalChunks,
+      answer: result.finalAnswer,
+      chunks: result.finalChunks,
     });
+
+    // 【P6】trace 落库（成功状态）
+    await saveTraceRunSafely(runId, userId, "rag", "success", events);
   } catch (error) {
     const message = (error as Error).message || "知识库问答失败";
     console.error("[AI] 知识库问答失败:", message);
     sse.send("error", { success: false, message });
+    // 【P6】trace 落库（失败状态，无事件）
+    await saveTraceRunSafely(runId, userId, "rag", "error", []);
   } finally {
     // 无论成功失败都关闭 SSE 流，避免连接挂起
     sse.close();
@@ -1053,90 +1106,100 @@ async function recommendJobs(req: Request, res: Response): Promise<void> {
 
   // ---------- 阶段 2：进入 SSE 流式通道 ----------
   const sse = createSSEWriter(res);
-  clearTrace();
+
+  // 【P6】本次执行的唯一 ID（用于 trace 落库 + 历史回放）
+  const runId = randomUUID();
 
   try {
-    // 组装求职意向描述（作为 HumanMessage 注入 Agent 上下文）
-    const intentParts: string[] = [];
-    if (skills) intentParts.push(`技能栈：${skills}`);
-    if (city) intentParts.push(`期望城市：${city}`);
-    if (expectedSalary) intentParts.push(`期望薪资：${expectedSalary}`);
-    const intent =
-      intentParts.length > 0
-        ? `我的求职意向如下：\n${intentParts.join("\n")}\n\n请帮我搜索并推荐匹配的职位。`
-        : "请帮我搜索并推荐合适的前端开发职位。";
+    // 【P6】用 runWithTrace 包裹整段图执行：ALS 隔离收集节点级 trace 事件
+    const { result, events } = await runWithTrace(runId, async () => {
+      // 组装求职意向描述（作为 HumanMessage 注入 Agent 上下文）
+      const intentParts: string[] = [];
+      if (skills) intentParts.push(`技能栈：${skills}`);
+      if (city) intentParts.push(`期望城市：${city}`);
+      if (expectedSalary) intentParts.push(`期望薪资：${expectedSalary}`);
+      const intent =
+        intentParts.length > 0
+          ? `我的求职意向如下：\n${intentParts.join("\n")}\n\n请帮我搜索并推荐匹配的职位。`
+          : "请帮我搜索并推荐合适的前端开发职位。";
 
-    // 初始消息流：系统 Prompt + 用户求职意向
-    const initialState: JobsState = {
-      messages: [
-        new SystemMessage(JOB_AGENT_SYSTEM_PROMPT),
-        new HumanMessage(intent),
-      ],
-      recommendations: null,
-    };
+      // 初始消息流：系统 Prompt + 用户求职意向
+      const initialState: JobsState = {
+        messages: [
+          new SystemMessage(JOB_AGENT_SYSTEM_PROMPT),
+          new HumanMessage(intent),
+        ],
+        recommendations: null,
+      };
 
-    // 通知客户端开始执行
-    sse.send("meta", { type: "start", message: "开始职位发现" });
+      // 通知客户端开始执行
+      sse.send("meta", { type: "start", message: "开始职位发现" });
 
-    // 根据当前用户 Key 构建 ReAct 图（按请求构建，保证 Key 隔离），
-    // 传入用户画像供 finalize 节点做个性化结构化推荐
-    const graph = buildJobsGraph(apiKey, {
-      profile: { city, skills, expectedSalary },
-    });
+      // 根据当前用户 Key 构建 ReAct 图（按请求构建，保证 Key 隔离），
+      // 传入用户画像供 finalize 节点做个性化结构化推荐
+      const graph = buildJobsGraph(apiKey, {
+        profile: { city, skills, expectedSalary },
+      });
 
-    // ReAct 循环为非流式（需完整 AIMessage 判断 tool_calls），用 updates 模式
-    const stream = await graph.stream(initialState, {
-      streamMode: "updates",
-    });
+      // ReAct 循环为非流式（需完整 AIMessage 判断 tool_calls），用 updates 模式
+      const stream = await graph.stream(initialState, {
+        streamMode: "updates",
+      });
 
-    let finalRecommendation: JobRecommendation | null = null;
+      let finalRecommendation: JobRecommendation | null = null;
 
-    for await (const updates of stream) {
-      const updateMap = updates as Record<string, Partial<JobsState>>;
+      for await (const updates of stream) {
+        const updateMap = updates as Record<string, Partial<JobsState>>;
 
-      for (const [nodeName, update] of Object.entries(updateMap)) {
-        if (nodeName === "agent") {
-          // agent 节点：推送本轮决策结果（调用工具 / 结束搜索）
-          const newMessages = update.messages ?? [];
-          const lastMsg = newMessages[newMessages.length - 1] as
-            | AIMessage
-            | undefined;
-          const hasToolCalls =
-            lastMsg instanceof AIMessage && (lastMsg.tool_calls?.length ?? 0) > 0;
+        for (const [nodeName, update] of Object.entries(updateMap)) {
+          if (nodeName === "agent") {
+            // agent 节点：推送本轮决策结果（调用工具 / 结束搜索）
+            const newMessages = update.messages ?? [];
+            const lastMsg = newMessages[newMessages.length - 1] as
+              | AIMessage
+              | undefined;
+            const hasToolCalls =
+              lastMsg instanceof AIMessage && (lastMsg.tool_calls?.length ?? 0) > 0;
 
-          sse.send("node", {
-            nodeName: "agent",
-            done: true,
-            message: hasToolCalls ? "Agent 正在搜索职位…" : "搜索完成，正在生成推荐…",
-            action: hasToolCalls ? "call_tools" : "answer",
-          });
-        } else if (nodeName === "tools") {
-          sse.send("node", {
-            nodeName: "tools",
-            done: true,
-            message: "已获取职位数据",
-          });
-        } else if (nodeName === "finalize") {
-          // finalize 节点：结构化推荐结果（含推荐原因/招呼语/直达链接）
-          finalRecommendation = update.recommendations ?? null;
-          sse.send("node", {
-            nodeName: "finalize",
-            done: true,
-            message: "推荐生成完成",
-            recommendationCount:
-              finalRecommendation?.recommendations.length ?? 0,
-          });
+            sse.send("node", {
+              nodeName: "agent",
+              done: true,
+              message: hasToolCalls ? "Agent 正在搜索职位…" : "搜索完成，正在生成推荐…",
+              action: hasToolCalls ? "call_tools" : "answer",
+            });
+          } else if (nodeName === "tools") {
+            sse.send("node", {
+              nodeName: "tools",
+              done: true,
+              message: "已获取职位数据",
+            });
+          } else if (nodeName === "finalize") {
+            // finalize 节点：结构化推荐结果（含推荐原因/招呼语/直达链接）
+            finalRecommendation = update.recommendations ?? null;
+            sse.send("node", {
+              nodeName: "finalize",
+              done: true,
+              message: "推荐生成完成",
+              recommendationCount:
+                finalRecommendation?.recommendations.length ?? 0,
+            });
+          }
         }
       }
-    }
+
+      return { finalRecommendation };
+    });
 
     // 附带节点级 trace 事件 + 完成事件（含结构化推荐）
-    sse.send("trace", { events: getTrace() });
+    sse.send("trace", { events });
     sse.send("done", {
       success: true,
       message: "职位推荐完成",
-      recommendations: finalRecommendation,
+      recommendations: result.finalRecommendation,
     });
+
+    // 【P6】trace 落库（成功状态）
+    await saveTraceRunSafely(runId, userId, "jobs", "success", events);
 
     // 【P5 新增】推荐结束后自动保存求职画像（跨轮记忆更新）
     // 仅在用户本次提供了至少一个字段时写入；失败静默降级，不影响已成功的推荐
@@ -1151,6 +1214,8 @@ async function recommendJobs(req: Request, res: Response): Promise<void> {
     const message = (error as Error).message || "职位推荐失败";
     console.error("[AI] 职位推荐失败:", message);
     sse.send("error", { success: false, message });
+    // 【P6】trace 落库（失败状态，无事件）
+    await saveTraceRunSafely(runId, userId, "jobs", "error", []);
   } finally {
     // 无论成功失败都关闭 SSE 流，避免连接挂起
     sse.close();
@@ -1220,6 +1285,70 @@ async function saveProfile(req: Request, res: Response): Promise<void> {
     const message = (error as Error).message || "保存求职画像失败";
     console.error("[AI] 保存求职画像失败:", message);
     res.status(500).json({ success: false, message, code: "PROFILE_SAVE_FAILED" });
+  }
+}
+
+/**
+ * 【P6 新增】GET /api/ai/trace/runs
+ *
+ * 列出当前用户最近的 AI 执行记录（不含事件详情，轻量分页）。
+ * 用于「AI 决策历史」列表，让用户看到每次 AI 执行的时间/类型/耗时。
+ *
+ * 响应体：{ success, data: [{ id, type, status, nodeCount, totalDurationMs, createdAt }] }
+ */
+async function listTraceRunRecords(req: Request, res: Response): Promise<void> {
+  const userId = (req as { user?: { id?: string } }).user?.id ?? "";
+  if (!userId) {
+    res.status(401).json({ success: false, message: "未登录", code: "UNAUTHORIZED" });
+    return;
+  }
+
+  try {
+    const runs = await listTraceRuns(userId);
+    res.json({ success: true, message: "查询成功", data: runs });
+  } catch (error) {
+    const message = (error as Error).message || "查询 trace 记录失败";
+    console.error("[AI-Trace] 查询记录失败:", message);
+    res.status(500).json({ success: false, message, code: "TRACE_LIST_FAILED" });
+  }
+}
+
+/**
+ * 【P6 新增】GET /api/ai/trace/runs/:id
+ *
+ * 查询单次 AI 执行的完整决策过程（含按顺序排列的节点事件）。
+ * 用于「回放」某次 AI 的每一步决策（输入/输出/耗时/时间戳）。
+ *
+ * 响应体：{ success, data: { id, type, status, ..., events: [...] } }
+ */
+async function getTraceRunRecord(req: Request, res: Response): Promise<void> {
+  const userId = (req as { user?: { id?: string } }).user?.id ?? "";
+  const runId = (req.params as { id?: string })?.id ?? "";
+
+  if (!userId) {
+    res.status(401).json({ success: false, message: "未登录", code: "UNAUTHORIZED" });
+    return;
+  }
+  if (!runId) {
+    res.status(400).json({ success: false, message: "缺少 run ID", code: "INVALID_ID" });
+    return;
+  }
+
+  try {
+    const run = await getTraceRun(userId, runId);
+    if (!run) {
+      res.status(404).json({
+        success: false,
+        message: "记录不存在或无权访问",
+        code: "NOT_FOUND",
+      });
+      return;
+    }
+    res.json({ success: true, message: "查询成功", data: run });
+  } catch (error) {
+    const message = (error as Error).message || "查询 trace 详情失败";
+    console.error("[AI-Trace] 查询详情失败:", message);
+    res.status(500).json({ success: false, message, code: "TRACE_GET_FAILED" });
   }
 }
 

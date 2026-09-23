@@ -169,3 +169,54 @@ model Chunk {
   @@index([documentId])
   @@map("chunks")
 }
+
+// 【P6 新增】============================================
+// TraceRun 模型 —— 一次 AI 执行（Trace 落库）
+// ============================================
+/// 一次 AI 图执行的可观测记录（P6 把 trace 从内存落库）
+/// 一次「简历分析 / 知识库问答 / 职位推荐」对应一条 run，
+/// 下挂多条节点级 TraceEvent，实现决策过程的持久化与历史回放。
+model TraceRun {
+  id              String   @id @default(uuid()) @map("id")
+  userId          String   @map("user_id")
+  /// 图类型：resume（简历分析）/ rag（知识库问答）/ jobs（职位发现）
+  type            String   @map("type")
+  /// 执行结果：success / error
+  status          String   @default("success") @map("status")
+  /// 节点数量
+  nodeCount       Int      @default(0) @map("node_count")
+  /// 总耗时（毫秒，各节点 durationMs 之和）
+  totalDurationMs Int      @default(0) @map("total_duration_ms")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  events          TraceEvent[]
+
+  @@index([userId, createdAt])
+  @@map("trace_runs")
+}
+
+// 【P6 新增】============================================
+// TraceEvent 模型 —— 单个节点执行事件（Trace 落库）
+// ============================================
+/// 单个 AI 节点的执行追踪记录（持久化版）
+/// input/output 存 JSON（Json 类型），序列化失败时降级为 null。
+model TraceEvent {
+  id         String   @id @default(uuid()) @map("id")
+  runId      String   @map("run_id")
+  nodeName   String   @map("node_name")
+  /// 节点执行顺序（从 0 开始，用于回放时保持原始顺序）
+  order      Int      @map("event_order")
+  /// 节点输入（JSON，已脱敏/序列化）
+  input      Json?    @map("input")
+  /// 节点输出（JSON）
+  output     Json?    @map("output")
+  durationMs Int      @map("duration_ms")
+  /// 事件发生时间（ISO 8601 字符串，保留原始值）
+  timestamp  String   @map("timestamp")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  run        TraceRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId])
+  @@map("trace_events")
+}

@@ -51,6 +51,9 @@ export type { JobIntent, JobRecommendHandlers } from "./modules/jobs";
 // 求职画像模块（P5 Memory）
 export { getJobProfileApi, saveJobProfileApi } from "./modules/jobs";
 
+// AI Trace 历史模块（P6 落库后新增）
+export { listTraceRunsApi, getTraceRunApi } from "./modules/trace";
+
 // Token 工具函数
 export { getToken, setToken, removeToken } from "./client";
 
@@ -79,6 +82,8 @@ export type {
   JobRecommendation,
   JobRecommendationItem,
   TraceEvent,
+  TraceRunListItem,
+  TraceRunDetail,
 } from "./types";
 
 // 枚举和常量导出
