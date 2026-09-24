@@ -27,11 +27,15 @@
  *   （P2 去掉了纯文本 token 逐字流，结构化输出改为节点完成时推送）
  *
  * 【认证】
- * 使用 authMiddleware 保护，只有登录用户才能调用。
+ * 本文件所有接口均需登录，统一在文件顶部挂一次 authMiddleware
+ * （aiRouter.use），不再逐个路由重复声明，杜绝漏挂；
+ * 各 handler 内用 requireUser(req, res) 取 userId —— 一次调用同时完成
+ * 「类型收窄」与「401 兜底」，401 响应体全项目只维护一份。
  *
  * 【Key 机制】
- * 通过 getDecryptedKey(userId) 按用户隔离读取明文 Key，
- * 无 Key 时返回 403，提示用户先在个人中心配置。
+ * 通过 loadUserKeyOrFail(userId, res, message) 按用户隔离读取明文 Key：
+ * 读取失败 → 500，用户未配置 → 403（提示先在个人中心配置）。
+ * 该辅助函数收敛了原本次散落在 4 个接口里的同款错误分支。
  */
 
 import { Router, type IRouter } from "express";
@@ -42,7 +46,7 @@ import {
   HumanMessage,
   AIMessage,
 } from "@langchain/core/messages";
-import { authMiddleware } from "../middleware/auth.js";
+import { authMiddleware, requireUser } from "../middleware/auth.js";
 import { getDecryptedKey } from "../services/deepseekKey.service.js";
 import multer from "multer";
 import {
@@ -117,6 +121,14 @@ const NO_KEY_MESSAGE =
 const NO_KEY_MESSAGE_KNOWLEDGE =
   "需先在个人中心配置 DeepSeek API Key 才能使用知识库问答";
 
+// 【P4 新增】职位推荐的 Key 提示
+const NO_KEY_MESSAGE_JOBS =
+  "需先在个人中心配置 DeepSeek API Key 才能使用职位推荐";
+
+// 【知识库文件解析】文本 AI 解析的 Key 提示（仅 LLM 兜底分支需要）
+const NO_KEY_MESSAGE_PARSE_TEXT =
+  "需先在个人中心配置 DeepSeek API Key 才能使用 AI 智能解析";
+
 /** 知识库 Excel 上传中间件（内存存储，限制 10MB，防止超大文件耗尽内存） */
 const knowledgeUpload = multer({
   storage: multer.memoryStorage(),
@@ -143,6 +155,52 @@ async function saveTraceRunSafely(
   }
 }
 
+/**
+ * 读取当前用户的明文 DeepSeek Key，失败时已写出响应并返回 null。
+ *
+ * 收敛了「按用户取 Key」的两条错误分支（原代码在 4 个接口里各复制一份）：
+ * - 读取过程抛异常     → 500 KEY_READ_FAILED
+ * - 用户尚未配置 Key   → 403 DEEPSEEK_KEY_NOT_CONFIGURED
+ *
+ * 调用方式：
+ * ```ts
+ * const apiKey = await loadUserKeyOrFail(userId, res, MSG);
+ * if (!apiKey) return;   // 错误响应已写出
+ * ```
+ *
+ * ⚠️ 必须在写响应头之前调用：SSE 接口要在 createSSEWriter(res) 之前，
+ * 否则错误只能通过 SSE 的 error 事件下发，前端拿不到业务错误码。
+ */
+async function loadUserKeyOrFail(
+  userId: string,
+  res: Response,
+  noKeyMessage: string
+): Promise<string | null> {
+  let apiKey = "";
+  try {
+    apiKey = await getDecryptedKey(userId);
+  } catch (error) {
+    console.error("[AI] 读取 API Key 失败:", (error as Error).message);
+    res.status(500).json({
+      success: false,
+      message: "读取 API Key 失败，请稍后重试",
+      code: "KEY_READ_FAILED",
+    });
+    return null;
+  }
+
+  if (!apiKey) {
+    res.status(403).json({
+      success: false,
+      message: noKeyMessage,
+      code: "DEEPSEEK_KEY_NOT_CONFIGURED",
+    });
+    return null;
+  }
+
+  return apiKey;
+}
+
 /** 节点名称 → 中文提示的映射，用于 SSE 的 node 事件 */
 const NODE_LABELS: Record<string, string> = {
   parse: "简历解析完成",
@@ -151,6 +209,25 @@ const NODE_LABELS: Record<string, string> = {
   suggest: "改进建议汇总完成",
 };
 
+// ============================================================
+// 认证前置：本文件所有接口均需登录
+// ============================================================
+
+/**
+ * 统一挂一次 authMiddleware，而不是在 16 个路由上各写一遍。
+ *
+ * 好处：
+ * 1. 新增路由自动受保护，不存在「写了路由忘挂中间件」的漏网可能；
+ * 2. 认证入口唯一，排查「这个接口到底要不要登录」只需看这一行。
+ *
+ * 注意：Express 的中间件按注册顺序生效，因此本行必须在下面所有路由之前。
+ */
+aiRouter.use(authMiddleware);
+
+// ============================================================
+// 路由定义
+// ============================================================
+
 /**
  * POST /api/ai/resume/analyze
  *
@@ -158,64 +235,59 @@ const NODE_LABELS: Record<string, string> = {
  *
  * 请求体：{ "text": "简历文本", "jobDescription": "可选岗位描述" }
  */
-aiRouter.post("/resume/analyze", authMiddleware, analyzeResume);
+aiRouter.post("/resume/analyze", analyzeResume);
 
-// 【P3 新增】POST /api/ai/knowledge/upload — 上传文档入库（需认证，JSON 返回）
-aiRouter.post("/knowledge/upload", authMiddleware, uploadKnowledge);
+// 【P3 新增】POST /api/ai/knowledge/upload — 上传文档入库（JSON 返回）
+aiRouter.post("/knowledge/upload", uploadKnowledge);
 
-// 【P3 新增】POST /api/ai/knowledge/ask — 知识库问答（需认证，SSE 返回）
-aiRouter.post("/knowledge/ask", authMiddleware, askKnowledge);
+// 【P3 新增】POST /api/ai/knowledge/ask — 知识库问答（SSE 返回）
+aiRouter.post("/knowledge/ask", askKnowledge);
 
-// 【知识库文件解析】GET /api/ai/knowledge/template — 下载导入模板（需认证）
-aiRouter.get("/knowledge/template", authMiddleware, downloadTemplate);
+// 【知识库文件解析】GET /api/ai/knowledge/template — 下载导入模板
+aiRouter.get("/knowledge/template", downloadTemplate);
 
-// 【知识库文件解析】GET /api/ai/knowledge/file — 下载上次上传的原始文件（需认证）
-aiRouter.get("/knowledge/file", authMiddleware, downloadKnowledgeFile);
+// 【知识库文件解析】GET /api/ai/knowledge/file — 下载上次上传的原始文件
+aiRouter.get("/knowledge/file", downloadKnowledgeFile);
 
-// 【知识库文件解析】GET /api/ai/knowledge/file-info — 查询文件元信息（需认证）
-aiRouter.get("/knowledge/file-info", authMiddleware, getFileInfo);
+// 【知识库文件解析】GET /api/ai/knowledge/file-info — 查询文件元信息
+aiRouter.get("/knowledge/file-info", getFileInfo);
 
-// 【知识库文件解析】DELETE /api/ai/knowledge/file — 删除保存的原始文件记录（需认证）
-aiRouter.delete("/knowledge/file", authMiddleware, deleteFileInfo);
+// 【知识库文件解析】DELETE /api/ai/knowledge/file — 删除保存的原始文件记录
+aiRouter.delete("/knowledge/file", deleteFileInfo);
 
-// 【知识库文件解析】POST /api/ai/knowledge/import — 上传 Excel 解析入库（需认证）
+// 【知识库文件解析】POST /api/ai/knowledge/import — 上传 Excel 解析入库
 aiRouter.post(
   "/knowledge/import",
-  authMiddleware,
   knowledgeUpload.single("file"),
   importKnowledge
 );
 
-// 【知识库文件解析】GET /api/ai/knowledge/documents — 列出知识条目（需认证）
-aiRouter.get("/knowledge/documents", authMiddleware, listKnowledgeDocuments);
+// 【知识库文件解析】GET /api/ai/knowledge/documents — 列出知识条目
+aiRouter.get("/knowledge/documents", listKnowledgeDocuments);
 
-// 【知识库文件解析】DELETE /api/ai/knowledge/documents/:id — 删除知识条目（需认证）
-aiRouter.delete(
-  "/knowledge/documents/:id",
-  authMiddleware,
-  deleteKnowledgeDocument
-);
+// 【知识库文件解析】DELETE /api/ai/knowledge/documents/:id — 删除知识条目
+aiRouter.delete("/knowledge/documents/:id", deleteKnowledgeDocument);
 
-// 【知识库文件解析】POST /api/ai/knowledge/parse-text — 文本解析成条目（需认证）
-aiRouter.post("/knowledge/parse-text", authMiddleware, parseTextKnowledge);
+// 【知识库文件解析】POST /api/ai/knowledge/parse-text — 文本解析成条目
+aiRouter.post("/knowledge/parse-text", parseTextKnowledge);
 
-// 【知识库文件解析】POST /api/ai/knowledge/batch — JSON 数组批量入库（需认证）
-aiRouter.post("/knowledge/batch", authMiddleware, batchImportKnowledge);
+// 【知识库文件解析】POST /api/ai/knowledge/batch — JSON 数组批量入库
+aiRouter.post("/knowledge/batch", batchImportKnowledge);
 
-// 【P4 新增】POST /api/ai/jobs/recommend — 职位发现 Agent 推荐（需认证，SSE 返回）
-aiRouter.post("/jobs/recommend", authMiddleware, recommendJobs);
+// 【P4 新增】POST /api/ai/jobs/recommend — 职位发现 Agent 推荐（SSE 返回）
+aiRouter.post("/jobs/recommend", recommendJobs);
 
-// 【P5 新增】GET /api/ai/profile — 读取用户求职画像（需认证，JSON 返回）
-aiRouter.get("/profile", authMiddleware, getProfile);
+// 【P5 新增】GET /api/ai/profile — 读取用户求职画像（JSON 返回）
+aiRouter.get("/profile", getProfile);
 
-// 【P5 新增】PUT /api/ai/profile — 保存用户求职画像（需认证，JSON 返回）
-aiRouter.put("/profile", authMiddleware, saveProfile);
+// 【P5 新增】PUT /api/ai/profile — 保存用户求职画像（JSON 返回）
+aiRouter.put("/profile", saveProfile);
 
-// 【P6 新增】GET /api/ai/trace/runs — 列出用户最近的 AI 执行记录（需认证，JSON 返回）
-aiRouter.get("/trace/runs", authMiddleware, listTraceRunRecords);
+// 【P6 新增】GET /api/ai/trace/runs — 列出用户最近的 AI 执行记录（JSON 返回）
+aiRouter.get("/trace/runs", listTraceRunRecords);
 
-// 【P6 新增】GET /api/ai/trace/runs/:id — 查询单次执行的完整决策过程（需认证，JSON 返回）
-aiRouter.get("/trace/runs/:id", authMiddleware, getTraceRunRecord);
+// 【P6 新增】GET /api/ai/trace/runs/:id — 查询单次执行的完整决策过程（JSON 返回）
+aiRouter.get("/trace/runs/:id", getTraceRunRecord);
 
 /**
  * 简历结构化分析处理器。
@@ -244,39 +316,12 @@ async function analyzeResume(req: Request, res: Response): Promise<void> {
   }
 
   // ---------- 阶段 1：读取当前用户 ----------
-  const userId = (req as { user?: { id?: string } }).user?.id ?? "";
-
-  if (!userId) {
-    res.status(401).json({
-      success: false,
-      message: "未登录，请先登录",
-      code: "UNAUTHORIZED",
-    });
-    return;
-  }
+  const userId = requireUser(req, res);
+  if (!userId) return;
 
   // ---------- 阶段 1：读取用户级 Key ----------
-  let apiKey = "";
-  try {
-    apiKey = await getDecryptedKey(userId);
-  } catch (error) {
-    console.error("[AI] 读取 API Key 失败:", (error as Error).message);
-    res.status(500).json({
-      success: false,
-      message: "读取 API Key 失败，请稍后重试",
-      code: "KEY_READ_FAILED",
-    });
-    return;
-  }
-
-  if (!apiKey) {
-    res.status(403).json({
-      success: false,
-      message: NO_KEY_MESSAGE,
-      code: "DEEPSEEK_KEY_NOT_CONFIGURED",
-    });
-    return;
-  }
+  const apiKey = await loadUserKeyOrFail(userId, res, NO_KEY_MESSAGE);
+  if (!apiKey) return;
 
   // ---------- 阶段 2：进入 SSE 流式通道 ----------
   const sse = createSSEWriter(res);
@@ -412,15 +457,8 @@ async function uploadKnowledge(req: Request, res: Response): Promise<void> {
   }
 
   // ---------- 读取当前用户 ----------
-  const userId = (req as { user?: { id?: string } }).user?.id ?? "";
-  if (!userId) {
-    res.status(401).json({
-      success: false,
-      message: "未登录，请先登录",
-      code: "UNAUTHORIZED",
-    });
-    return;
-  }
+  const userId = requireUser(req, res);
+  if (!userId) return;
 
   // ---------- 入库（分块 + 向量化 + 写 pgvector） ----------
   try {
@@ -479,15 +517,8 @@ async function downloadKnowledgeFile(
   req: Request,
   res: Response
 ): Promise<void> {
-  const userId = (req as { user?: { id?: string } }).user?.id ?? "";
-  if (!userId) {
-    res.status(401).json({
-      success: false,
-      message: "未登录，请先登录",
-      code: "UNAUTHORIZED",
-    });
-    return;
-  }
+  const userId = requireUser(req, res);
+  if (!userId) return;
 
   const file = await getKnowledgeFile(userId);
   if (!file) {
@@ -521,15 +552,8 @@ async function downloadKnowledgeFile(
  * 前端据此判断「显示下载模板引导」还是「显示文件卡片」。
  */
 async function getFileInfo(req: Request, res: Response): Promise<void> {
-  const userId = (req as { user?: { id?: string } }).user?.id ?? "";
-  if (!userId) {
-    res.status(401).json({
-      success: false,
-      message: "未登录，请先登录",
-      code: "UNAUTHORIZED",
-    });
-    return;
-  }
+  const userId = requireUser(req, res);
+  if (!userId) return;
 
   try {
     const info = await getKnowledgeFileInfo(userId);
@@ -554,15 +578,8 @@ async function getFileInfo(req: Request, res: Response): Promise<void> {
  * 删除后前端回到「下载模板」引导状态。
  */
 async function deleteFileInfo(req: Request, res: Response): Promise<void> {
-  const userId = (req as { user?: { id?: string } }).user?.id ?? "";
-  if (!userId) {
-    res.status(401).json({
-      success: false,
-      message: "未登录，请先登录",
-      code: "UNAUTHORIZED",
-    });
-    return;
-  }
+  const userId = requireUser(req, res);
+  if (!userId) return;
 
   try {
     const deleted = await deleteKnowledgeFile(userId);
@@ -585,15 +602,8 @@ async function deleteFileInfo(req: Request, res: Response): Promise<void> {
  */
 async function importKnowledge(req: Request, res: Response): Promise<void> {
   // ---------- 1. 用户校验 ----------
-  const userId = (req as { user?: { id?: string } }).user?.id ?? "";
-  if (!userId) {
-    res.status(401).json({
-      success: false,
-      message: "未登录，请先登录",
-      code: "UNAUTHORIZED",
-    });
-    return;
-  }
+  const userId = requireUser(req, res);
+  if (!userId) return;
 
   // ---------- 2. 文件校验（multer 无文件 / 非 xlsx） ----------
   const file = (req as { file?: Express.Multer.File }).file;
@@ -680,15 +690,8 @@ async function listKnowledgeDocuments(
   req: Request,
   res: Response
 ): Promise<void> {
-  const userId = (req as { user?: { id?: string } }).user?.id ?? "";
-  if (!userId) {
-    res.status(401).json({
-      success: false,
-      message: "未登录，请先登录",
-      code: "UNAUTHORIZED",
-    });
-    return;
-  }
+  const userId = requireUser(req, res);
+  if (!userId) return;
 
   try {
     const documents = await listDocuments(userId);
@@ -709,17 +712,10 @@ async function deleteKnowledgeDocument(
   req: Request,
   res: Response
 ): Promise<void> {
-  const userId = (req as { user?: { id?: string } }).user?.id ?? "";
+  const userId = requireUser(req, res);
   const documentId = (req.params as { id?: string })?.id ?? "";
 
-  if (!userId) {
-    res.status(401).json({
-      success: false,
-      message: "未登录，请先登录",
-      code: "UNAUTHORIZED",
-    });
-    return;
-  }
+  if (!userId) return;
   if (!documentId) {
     res.status(400).json({
       success: false,
@@ -757,15 +753,8 @@ async function deleteKnowledgeDocument(
  * 响应体：{ success, data: { entries, needLLM } }
  */
 async function parseTextKnowledge(req: Request, res: Response): Promise<void> {
-  const userId = (req as { user?: { id?: string } }).user?.id ?? "";
-  if (!userId) {
-    res.status(401).json({
-      success: false,
-      message: "未登录，请先登录",
-      code: "UNAUTHORIZED",
-    });
-    return;
-  }
+  const userId = requireUser(req, res);
+  if (!userId) return;
 
   const body = (req.body ?? {}) as { text?: unknown; useLLM?: unknown };
   const text = typeof body.text === "string" ? body.text.trim() : "";
@@ -794,26 +783,8 @@ async function parseTextKnowledge(req: Request, res: Response): Promise<void> {
 
   // ---------- 2. 规则解析无结果且允许 LLM → 兜底 ----------
   if (entries.length === 0 && useLLM && llmParseEnabled) {
-    let apiKey = "";
-    try {
-      apiKey = await getDecryptedKey(userId);
-    } catch (error) {
-      console.error("[AI] 读取 API Key 失败:", (error as Error).message);
-      res.status(500).json({
-        success: false,
-        message: "读取 API Key 失败，请稍后重试",
-        code: "KEY_READ_FAILED",
-      });
-      return;
-    }
-    if (!apiKey) {
-      res.status(403).json({
-        success: false,
-        message: "需先在个人中心配置 DeepSeek API Key 才能使用 AI 智能解析",
-        code: "DEEPSEEK_KEY_NOT_CONFIGURED",
-      });
-      return;
-    }
+    const apiKey = await loadUserKeyOrFail(userId, res, NO_KEY_MESSAGE_PARSE_TEXT);
+    if (!apiKey) return;
 
     try {
       // 解析 Prompt 与模型参数由配置中心注入（P3 参数收敛）
@@ -859,15 +830,8 @@ async function batchImportKnowledge(
   req: Request,
   res: Response
 ): Promise<void> {
-  const userId = (req as { user?: { id?: string } }).user?.id ?? "";
-  if (!userId) {
-    res.status(401).json({
-      success: false,
-      message: "未登录，请先登录",
-      code: "UNAUTHORIZED",
-    });
-    return;
-  }
+  const userId = requireUser(req, res);
+  if (!userId) return;
 
   const body = (req.body ?? {}) as { entries?: unknown; mode?: unknown };
   const rawEntries = Array.isArray(body.entries) ? body.entries : [];
@@ -954,38 +918,12 @@ async function askKnowledge(req: Request, res: Response): Promise<void> {
   }
 
   // ---------- 阶段 1：读取当前用户 ----------
-  const userId = (req as { user?: { id?: string } }).user?.id ?? "";
-  if (!userId) {
-    res.status(401).json({
-      success: false,
-      message: "未登录，请先登录",
-      code: "UNAUTHORIZED",
-    });
-    return;
-  }
+  const userId = requireUser(req, res);
+  if (!userId) return;
 
   // ---------- 阶段 1：读取用户级 DeepSeek Key（answer 节点使用） ----------
-  let apiKey = "";
-  try {
-    apiKey = await getDecryptedKey(userId);
-  } catch (error) {
-    console.error("[AI] 读取 API Key 失败:", (error as Error).message);
-    res.status(500).json({
-      success: false,
-      message: "读取 API Key 失败，请稍后重试",
-      code: "KEY_READ_FAILED",
-    });
-    return;
-  }
-
-  if (!apiKey) {
-    res.status(403).json({
-      success: false,
-      message: NO_KEY_MESSAGE_KNOWLEDGE,
-      code: "DEEPSEEK_KEY_NOT_CONFIGURED",
-    });
-    return;
-  }
+  const apiKey = await loadUserKeyOrFail(userId, res, NO_KEY_MESSAGE_KNOWLEDGE);
+  if (!apiKey) return;
 
   // ---------- 阶段 2：进入 SSE 流式通道 ----------
   const sse = createSSEWriter(res);
@@ -1090,38 +1028,12 @@ async function askKnowledge(req: Request, res: Response): Promise<void> {
  */
 async function recommendJobs(req: Request, res: Response): Promise<void> {
   // ---------- 阶段 1：读取当前用户 ----------
-  const userId = (req as { user?: { id?: string } }).user?.id ?? "";
-  if (!userId) {
-    res.status(401).json({
-      success: false,
-      message: "未登录，请先登录",
-      code: "UNAUTHORIZED",
-    });
-    return;
-  }
+  const userId = requireUser(req, res);
+  if (!userId) return;
 
   // ---------- 阶段 1：读取用户级 DeepSeek Key ----------
-  let apiKey = "";
-  try {
-    apiKey = await getDecryptedKey(userId);
-  } catch (error) {
-    console.error("[AI] 读取 API Key 失败:", (error as Error).message);
-    res.status(500).json({
-      success: false,
-      message: "读取 API Key 失败，请稍后重试",
-      code: "KEY_READ_FAILED",
-    });
-    return;
-  }
-
-  if (!apiKey) {
-    res.status(403).json({
-      success: false,
-      message: "需先在个人中心配置 DeepSeek API Key 才能使用职位推荐",
-      code: "DEEPSEEK_KEY_NOT_CONFIGURED",
-    });
-    return;
-  }
+  const apiKey = await loadUserKeyOrFail(userId, res, NO_KEY_MESSAGE_JOBS);
+  if (!apiKey) return;
 
   // ---------- 阶段 1：解析求职意向 ----------
   const body = (req.body ?? {}) as {
@@ -1279,11 +1191,8 @@ async function recommendJobs(req: Request, res: Response): Promise<void> {
  * 未设置过画像时 data 为 null。
  */
 async function getProfile(req: Request, res: Response): Promise<void> {
-  const userId = (req as { user?: { id?: string } }).user?.id ?? "";
-  if (!userId) {
-    res.status(401).json({ success: false, message: "未登录", code: "UNAUTHORIZED" });
-    return;
-  }
+  const userId = requireUser(req, res);
+  if (!userId) return;
 
   try {
     const profile = await getJobProfile(userId);
@@ -1304,11 +1213,8 @@ async function getProfile(req: Request, res: Response): Promise<void> {
  * 响应体：{ "success": true, "data": 保存后的完整画像 }
  */
 async function saveProfile(req: Request, res: Response): Promise<void> {
-  const userId = (req as { user?: { id?: string } }).user?.id ?? "";
-  if (!userId) {
-    res.status(401).json({ success: false, message: "未登录", code: "UNAUTHORIZED" });
-    return;
-  }
+  const userId = requireUser(req, res);
+  if (!userId) return;
 
   const body = (req.body ?? {}) as {
     jobTitle?: unknown;
@@ -1345,11 +1251,8 @@ async function saveProfile(req: Request, res: Response): Promise<void> {
  * 响应体：{ success, data: [{ id, type, status, nodeCount, totalDurationMs, createdAt }] }
  */
 async function listTraceRunRecords(req: Request, res: Response): Promise<void> {
-  const userId = (req as { user?: { id?: string } }).user?.id ?? "";
-  if (!userId) {
-    res.status(401).json({ success: false, message: "未登录", code: "UNAUTHORIZED" });
-    return;
-  }
+  const userId = requireUser(req, res);
+  if (!userId) return;
 
   try {
     const runs = await listTraceRuns(userId);
@@ -1370,13 +1273,10 @@ async function listTraceRunRecords(req: Request, res: Response): Promise<void> {
  * 响应体：{ success, data: { id, type, status, ..., events: [...] } }
  */
 async function getTraceRunRecord(req: Request, res: Response): Promise<void> {
-  const userId = (req as { user?: { id?: string } }).user?.id ?? "";
+  const userId = requireUser(req, res);
   const runId = (req.params as { id?: string })?.id ?? "";
 
-  if (!userId) {
-    res.status(401).json({ success: false, message: "未登录", code: "UNAUTHORIZED" });
-    return;
-  }
+  if (!userId) return;
   if (!runId) {
     res.status(400).json({ success: false, message: "缺少 run ID", code: "INVALID_ID" });
     return;

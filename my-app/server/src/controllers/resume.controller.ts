@@ -7,6 +7,7 @@
  */
 
 import type { Request, Response, NextFunction } from "express";
+import { requireUser } from "../middleware/auth.js";
 import * as resumeService from "../services/resume.service.js";
 import * as deepseekKeyService from "../services/deepseekKey.service.js";
 
@@ -83,8 +84,10 @@ export async function optimizeResume(
     }
 
     // 从当前登录用户配置中读取密钥（按用户隔离）
-    const userId = (req as any).user?.id;
-    const apiKey = userId ? await deepseekKeyService.getDecryptedKey(userId) : "";
+    const userId = requireUser(req, res);
+    if (!userId) return;
+
+    const apiKey = await deepseekKeyService.getDecryptedKey(userId);
 
     if (!apiKey) {
       res.status(403).json({
@@ -133,8 +136,10 @@ export async function chatResume(
     }
 
     // 从当前登录用户配置中读取密钥
-    const userId = (req as any).user?.id;
-    const apiKey = userId ? await deepseekKeyService.getDecryptedKey(userId) : "";
+    const userId = requireUser(req, res);
+    if (!userId) return;
+
+    const apiKey = await deepseekKeyService.getDecryptedKey(userId);
 
     if (!apiKey) {
       res.status(403).json({

@@ -25,6 +25,7 @@
 
 import type { Request, Response, NextFunction } from "express";
 import prisma from "../lib/prisma.js";
+import { requireUser } from "./auth.js";
 
 /**
  * 系统预置角色代码常量
@@ -76,18 +77,10 @@ export function requireRole(...codes: string[]) {
     next: NextFunction
   ): Promise<void> => {
     try {
-      // 从 authMiddleware 挂载的 user 对象取用户 ID
-      const userId = (req as any).user?.id;
-
-      // 兜底：理论上 authMiddleware 已拦截未登录请求，这里防御性校验
-      if (!userId) {
-        res.status(401).json({
-          success: false,
-          message: "未登录，请先登录",
-          code: "UNAUTHORIZED",
-        });
-        return;
-      }
+      // 兜底：理论上 authMiddleware 已拦截未登录请求，这里防御性校验。
+      // requireUser 内部即为「取 ID + 未登录写 401」，全项目统一一份实现。
+      const userId = requireUser(req, res);
+      if (!userId) return;
 
       // 查询用户实际角色
       const roles = await getUserRoleCodes(userId);

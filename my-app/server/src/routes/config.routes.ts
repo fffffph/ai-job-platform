@@ -27,7 +27,7 @@
 
 import { Router, type IRouter } from "express";
 import type { Request, Response } from "express";
-import { authMiddleware } from "../middleware/auth.js";
+import { authMiddleware, requireUser } from "../middleware/auth.js";
 import { requireRole, ROLE_CODES } from "../middleware/rbac.js";
 import {
   getEffectiveConfigs,
@@ -109,7 +109,8 @@ configRouter.post(
   requireRole(ROLE_CODES.ADMIN),
   async (req, res, next) => {
     try {
-      const userId = (req as any).user?.id;
+      const userId = requireUser(req, res);
+      if (!userId) return;
       const { key, type, value, label, description, enabled } = req.body ?? {};
 
       if (!key || typeof key !== "string") {
@@ -157,7 +158,8 @@ configRouter.put(
   requireRole(ROLE_CODES.ADMIN),
   async (req, res, next) => {
     try {
-      const userId = (req as any).user?.id;
+      const userId = requireUser(req, res);
+      if (!userId) return;
       // 前端约定传 { items: [...] }，兼容直接传数组
       const items = req.body?.items ?? req.body;
 
@@ -198,7 +200,8 @@ configRouter.put(
   requireRole(ROLE_CODES.ADMIN),
   async (req, res, next) => {
     try {
-      const userId = (req as any).user?.id;
+      const userId = requireUser(req, res);
+      if (!userId) return;
       const key = req.params.key as string;
       const { value, enabled } = req.body;
 

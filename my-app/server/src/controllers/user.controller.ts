@@ -5,11 +5,13 @@
  *
  * 【职责】
  * 接收 HTTP 请求 → 参数校验 → 调用 Service → 返回 JSON 响应。
- * 所有需要登录的端点都经过 authMiddleware 保护，
- * 用户 ID 从 req.user.id 获取（由中间件挂载）。
+ * 所有需要登录的端点都经过 authMiddleware 保护；
+ * 用户 ID 通过 requireUser(req, res) 统一获取（含类型收窄 + 401 兜底），
+ * 不再逐个 handler 手写「取 ID + 判空 + 401」。
  */
 
 import type { Request, Response, NextFunction } from "express";
+import { requireUser } from "../middleware/auth.js";
 import * as userService from "../services/user.service.js";
 import * as deepseekKeyService from "../services/deepseekKey.service.js";
 import * as siliconflowKeyService from "../services/siliconflowKey.service.js";
@@ -31,16 +33,8 @@ export async function getProfile(
 ): Promise<void> {
   try {
     // 从中间件挂载的 user 对象中提取 ID
-    const userId = (req as any).user?.id;
-
-    if (!userId) {
-      res.status(401).json({
-        success: false,
-        message: "未登录",
-        code: "UNAUTHORIZED",
-      });
-      return;
-    }
+    const userId = requireUser(req, res);
+    if (!userId) return;
 
     const profile = await userService.getProfile(userId);
 
@@ -71,16 +65,8 @@ export async function updateProfile(
   next: NextFunction
 ): Promise<void> {
   try {
-    const userId = (req as any).user?.id;
-
-    if (!userId) {
-      res.status(401).json({
-        success: false,
-        message: "未登录",
-        code: "UNAUTHORIZED",
-      });
-      return;
-    }
+    const userId = requireUser(req, res);
+    if (!userId) return;
 
     // 提取可更新的字段
     const { name, bio } = req.body;
@@ -125,16 +111,8 @@ export async function changePassword(
   next: NextFunction
 ): Promise<void> {
   try {
-    const userId = (req as any).user?.id;
-
-    if (!userId) {
-      res.status(401).json({
-        success: false,
-        message: "未登录",
-        code: "UNAUTHORIZED",
-      });
-      return;
-    }
+    const userId = requireUser(req, res);
+    if (!userId) return;
 
     const { oldPassword, newPassword } = req.body;
 
@@ -191,16 +169,8 @@ export async function getRoles(
   next: NextFunction
 ): Promise<void> {
   try {
-    const userId = (req as any).user?.id;
-
-    if (!userId) {
-      res.status(401).json({
-        success: false,
-        message: "未登录",
-        code: "UNAUTHORIZED",
-      });
-      return;
-    }
+    const userId = requireUser(req, res);
+    if (!userId) return;
 
     const roles = await userService.getUserRoles(userId);
 
@@ -229,11 +199,8 @@ export async function getDeepSeekKey(
   next: NextFunction
 ): Promise<void> {
   try {
-    const userId = (req as any).user?.id;
-    if (!userId) {
-      res.status(401).json({ success: false, message: "未登录", code: "UNAUTHORIZED" });
-      return;
-    }
+    const userId = requireUser(req, res);
+    if (!userId) return;
 
     const status = await deepseekKeyService.getKeyStatus(userId);
     res.status(200).json({ success: true, message: "获取成功", data: status });
@@ -254,11 +221,8 @@ export async function saveDeepSeekKey(
   next: NextFunction
 ): Promise<void> {
   try {
-    const userId = (req as any).user?.id;
-    if (!userId) {
-      res.status(401).json({ success: false, message: "未登录", code: "UNAUTHORIZED" });
-      return;
-    }
+    const userId = requireUser(req, res);
+    if (!userId) return;
 
     const { apiKey } = req.body;
     if (!apiKey || !apiKey.trim()) {
@@ -292,11 +256,8 @@ export async function deleteDeepSeekKey(
   next: NextFunction
 ): Promise<void> {
   try {
-    const userId = (req as any).user?.id;
-    if (!userId) {
-      res.status(401).json({ success: false, message: "未登录", code: "UNAUTHORIZED" });
-      return;
-    }
+    const userId = requireUser(req, res);
+    if (!userId) return;
 
     await deepseekKeyService.deleteKey(userId);
     res.status(200).json({ success: true, message: "API Key 已删除" });
@@ -317,11 +278,8 @@ export async function testDeepSeekKey(
   next: NextFunction
 ): Promise<void> {
   try {
-    const userId = (req as any).user?.id;
-    if (!userId) {
-      res.status(401).json({ success: false, message: "未登录", code: "UNAUTHORIZED" });
-      return;
-    }
+    const userId = requireUser(req, res);
+    if (!userId) return;
 
     const { apiKey } = req.body;
     if (!apiKey || !apiKey.trim()) {
@@ -358,11 +316,8 @@ export async function getSiliconFlowKey(
   next: NextFunction
 ): Promise<void> {
   try {
-    const userId = (req as any).user?.id;
-    if (!userId) {
-      res.status(401).json({ success: false, message: "未登录", code: "UNAUTHORIZED" });
-      return;
-    }
+    const userId = requireUser(req, res);
+    if (!userId) return;
 
     const status = await siliconflowKeyService.getKeyStatus(userId);
     res.status(200).json({ success: true, message: "获取成功", data: status });
@@ -383,11 +338,8 @@ export async function saveSiliconFlowKey(
   next: NextFunction
 ): Promise<void> {
   try {
-    const userId = (req as any).user?.id;
-    if (!userId) {
-      res.status(401).json({ success: false, message: "未登录", code: "UNAUTHORIZED" });
-      return;
-    }
+    const userId = requireUser(req, res);
+    if (!userId) return;
 
     const { apiKey } = req.body;
     if (!apiKey || !apiKey.trim()) {
@@ -420,11 +372,8 @@ export async function deleteSiliconFlowKey(
   next: NextFunction
 ): Promise<void> {
   try {
-    const userId = (req as any).user?.id;
-    if (!userId) {
-      res.status(401).json({ success: false, message: "未登录", code: "UNAUTHORIZED" });
-      return;
-    }
+    const userId = requireUser(req, res);
+    if (!userId) return;
 
     await siliconflowKeyService.deleteKey(userId);
     res.status(200).json({ success: true, message: "API Key 已删除" });
@@ -445,11 +394,8 @@ export async function testSiliconFlowKey(
   next: NextFunction
 ): Promise<void> {
   try {
-    const userId = (req as any).user?.id;
-    if (!userId) {
-      res.status(401).json({ success: false, message: "未登录", code: "UNAUTHORIZED" });
-      return;
-    }
+    const userId = requireUser(req, res);
+    if (!userId) return;
 
     const { apiKey } = req.body;
     if (!apiKey || !apiKey.trim()) {

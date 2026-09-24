@@ -16,7 +16,7 @@ import { Router, type IRouter } from "express";
 import multer from "multer";
 import path from "path";
 import { fileURLToPath } from "url";
-import { authMiddleware } from "../middleware/auth.js";
+import { authMiddleware, requireUser } from "../middleware/auth.js";
 import * as userController from "../controllers/user.controller.js";
 import * as userService from "../services/user.service.js";
 
@@ -147,7 +147,9 @@ userRouter.post(
   },
   async (req, res, next) => {
     try {
-      const userId = (req as any).user?.id;
+      const userId = requireUser(req, res);
+      if (!userId) return;
+
       const file = req.file;
 
       if (!file) {
