@@ -28,7 +28,10 @@
 
 import { StateGraph, START, END } from "@langchain/langgraph";
 import { AIMessage } from "@langchain/core/messages";
-import { createDeepSeekChat } from "../../llm/deepseek.js";
+import {
+  createDeepSeekChat,
+  type DeepSeekReasoningEffort,
+} from "../../llm/deepseek.js";
 import { JobsStateAnnotation, type JobsState } from "./state.js";
 import {
   createAgentNode,
@@ -56,6 +59,16 @@ export interface JobsGraphOptions {
   maxTokens?: number;
   /** 请求超时毫秒（默认 60000，配置项 llm.timeout_ms） */
   timeout?: number;
+  /**
+   * 是否开启深度思考（Thinking Mode）。
+   *
+   * 本图是项目里唯一「多轮 + tools」的链路，也是唯一会触发 DeepSeek
+   * 「必须回传 reasoning_content」约束的地方；回填由 llm/deepseek.ts 的
+   * replayReasoningToRequest 负责。显式传 false 会下发关闭指令。
+   */
+  thinking?: boolean;
+  /** 思考强度档位（仅在 thinking 为 true 时下发） */
+  reasoningEffort?: DeepSeekReasoningEffort;
   // —— 职位推荐参数 ——
   /** 推荐条数上限（默认 8，配置项 jobs.max_recommend） */
   maxRecommend?: number;
@@ -85,7 +98,28 @@ export function buildJobsGraph(
     temperature: options?.temperature,
     maxTokens: options?.maxTokens,
     timeout: options?.timeout,
+    thinking: options?.thinking,
+    reasoningEffort: options?.reasoningEffort,
   });
+  /**
+   * finalize 专用实例：强制关闭思考。
+   *
+   * finalize 走 withStructuredOutput(functionCalling)，而该方式依赖强制
+   * tool_choice，DeepSeek 思考模式不支持（会返回 400 Thinking mode does not
+   * support this tool_choice，已实测），因此这里必须另建一个关闭思考的实例。
+   * 详见 llm/deepseek.ts 模块头的「能力边界」。
+   *
+   * agent 节点不受影响：它用 bindTools 让模型自主决定是否调工具，没有
+   * tool_choice，所以可以正常开思考。
+   */
+  const structuredLlm = createDeepSeekChat(apiKey, {
+    model: options?.model,
+    temperature: options?.temperature,
+    maxTokens: options?.maxTokens,
+    timeout: options?.timeout,
+    thinking: false,
+  });
+
   const maxIterations = options?.maxIterations ?? 6;
   const profile: FinalizeProfile = options?.profile ?? {
     city: "",
@@ -98,11 +132,11 @@ export function buildJobsGraph(
   const searchTool = createSearchJobsTool(useMockJobs);
   const toolMap = { search_jobs: searchTool };
 
-  // 注入模型实例到 agent 节点与 finalize 节点（闭包），
-  // finalize 节点的推荐条数/招呼语字数由配置中心注入
+  // 注入模型实例到 agent 节点与 finalize 节点（闭包）：
+  // agent 用跟随开关的 llm，finalize 用固定关闭思考的 structuredLlm
   const agentNode = createAgentNode(llm, [searchTool]);
   const toolsNode = createToolsNode(toolMap);
-  const finalizeNode = createFinalizeNode(llm, profile, {
+  const finalizeNode = createFinalizeNode(structuredLlm, profile, {
     maxRecommend: options?.maxRecommend,
     greetingMaxLen: options?.greetingMaxLen,
   });

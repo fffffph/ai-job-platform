@@ -101,6 +101,10 @@ export function createAnalyzeNode(llm: ChatOpenAI, options?: ResumeNodePrompts) 
     // 绑定 zod schema 的结构化模型，invoke 返回 ResumeAnalysis 对象。
     // 注意：显式指定 method: "functionCalling"，因为 DeepSeek 不支持 OpenAI 的
     // response_format（jsonMode），必须走 tool calling 方式做结构化输出。
+    //
+    // ⚠️ functionCalling 会强制 tool_choice，与思考模式互斥（同时用会 400）；
+    // 简历链路的模型实例由装配层固定关闭思考（见 config/ai-config.ts 的
+    // RESUME_THINKING_SUPPORTED）。
     const structuredLlm = llm.withStructuredOutput(ResumeAnalysisSchema, {
       method: "functionCalling",
     });
@@ -131,6 +135,7 @@ export function createAnalyzeNode(llm: ChatOpenAI, options?: ResumeNodePrompts) 
       timestamp: new Date().toISOString(),
     });
 
+    // 本链路固定关闭思考（functionCalling 与思考模式互斥），故不产出思考链
     return { analysis };
   };
 }
@@ -165,6 +170,7 @@ export function createMatchNode(llm: ChatOpenAI, options?: ResumeNodePrompts) {
       return output;
     }
 
+    // ⚠️ 同 analyze 节点：functionCalling 强制 tool_choice，与思考模式互斥
     const structuredLlm = llm.withStructuredOutput(MatchResultSchema, {
       method: "functionCalling",
     });
@@ -198,6 +204,7 @@ export function createMatchNode(llm: ChatOpenAI, options?: ResumeNodePrompts) {
       timestamp: new Date().toISOString(),
     });
 
+    // 同 analyze 节点：functionCalling 与思考模式互斥，本节点不产出思考链
     return { match };
   };
 }

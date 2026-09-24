@@ -17,6 +17,15 @@
 
 import type { Response } from "express";
 
+/**
+ * 心跳间隔（毫秒）。
+ *
+ * 开启深度思考后，模型可能十几秒到一分钟都不产出任何节点事件，
+ * 期间连接上没有任何数据流过，Nginx / 浏览器 / 防火墙都可能把这段
+ * 「空闲」判定为死连接并断开。定期发送 SSE 注释帧即可保活。
+ */
+const SSE_HEARTBEAT_MS = 15_000;
+
 /** 一条待发送的 SSE 事件 */
 export interface SSEMessage {
   /** 事件类型，如 token / node / trace / done / error / meta */
@@ -61,9 +70,25 @@ export function createSSEWriter(res: Response): SSEWriter {
   // 关闭标记：防止往已断开的 socket 继续写入导致异常
   let closed = false;
 
+  /**
+   * 心跳定时器。
+   *
+   * 发送的是 SSE 注释帧（以 ":" 开头）：按 SSE 规范客户端必须忽略它，
+   * 前端 readSSEStream 的 parseSSEBlock 对「没有 data 行」的块返回 null，
+   * 因此不会产生任何多余事件，纯粹用于保活。
+   */
+  const heartbeat = setInterval(() => {
+    if (closed) return;
+    res.write(": ping\n\n");
+  }, SSE_HEARTBEAT_MS);
+
+  // 不因心跳定时器阻止 Node 进程退出（类型上可能不存在，故做能力探测）
+  heartbeat.unref?.();
+
   // 客户端主动断开时置为关闭，后续 send 直接忽略
   res.on("close", () => {
     closed = true;
+    clearInterval(heartbeat);
   });
 
   /**
@@ -99,6 +124,8 @@ export function createSSEWriter(res: Response): SSEWriter {
       return;
     }
     closed = true;
+    // 结束前务必清掉心跳，否则定时器会持续往已关闭的响应写入
+    clearInterval(heartbeat);
     res.end();
   }
 

@@ -253,6 +253,21 @@ export interface TraceEvent {
   timestamp: string;
 }
 
+/**
+ * 深度思考的一段推理过程（对应后端 SSE 的 reasoning 事件）。
+ *
+ * ReAct 循环里 agent 会执行多轮，因此一次请求可能产生多段思考；
+ * 前端应累积成数组展示，而不是只保留最后一段。
+ */
+export interface ReasoningEntry {
+  /** 产出该段思考的节点名（agent / finalize / generate / analyze / match_assess） */
+  nodeName?: string;
+  /** 思考过程全文 */
+  content: string;
+  /** 该轮模型调用耗时（毫秒） */
+  reasoningMs: number;
+}
+
 // ========== AI Trace 历史（P6 落库后新增） ==========
 
 /** AI 执行的图类型：简历分析 / 知识库问答 / 职位发现 */

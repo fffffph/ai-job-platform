@@ -9,12 +9,25 @@
  */
 
 import React from "react";
-import { Upload, Input, Button, Tabs, Card, Divider } from "antd";
-import { InboxOutlined, RocketOutlined } from "@ant-design/icons";
+import { Upload, Input, Button, Tabs, Card, Divider, Switch, Tooltip } from "antd";
+import {
+  InboxOutlined,
+  RocketOutlined,
+  QuestionCircleOutlined,
+} from "@ant-design/icons";
 import { motion } from "framer-motion";
 
 const { Dragger } = Upload;
 const { TextArea } = Input;
+
+/** 深度思考开关的展示与操作（由 useConversation 的 useThinkingPreference 提供） */
+export interface ThinkingControl {
+  /** 全局能力是否开放（主应用配置中心 switch.deep_thinking） */
+  available: boolean;
+  /** 实际生效值 */
+  effective: boolean;
+  setEnabled: (next: boolean) => void;
+}
 
 interface Props {
   file: File | null;
@@ -25,6 +38,8 @@ interface Props {
   onTextInput: (text: string) => void;
   onJobInput: (jd: string) => void;
   onOptimize: () => void;
+  /** 深度思考开关 */
+  thinking: ThinkingControl;
 }
 
 const Step1Input: React.FC<Props> = ({
@@ -35,6 +50,7 @@ const Step1Input: React.FC<Props> = ({
   onTextInput,
   onJobInput,
   onOptimize,
+  thinking,
 }) => {
   const hasContent = !!file || !!resumeText.trim();
 
@@ -112,6 +128,42 @@ const Step1Input: React.FC<Props> = ({
         </div>
 
         <Divider />
+
+        {/* 深度思考开关：默认关闭，开启后模型先推理再优化，思考过程逐字展示 */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 6,
+            marginBottom: 12,
+          }}
+        >
+          <Switch
+            size="small"
+            checked={thinking.effective}
+            disabled={!thinking.available}
+            onChange={thinking.setEnabled}
+          />
+          <span style={{ fontSize: 13, color: "var(--text-2)" }}>深度思考</span>
+          <Tooltip
+            title={
+              thinking.available
+                ? "开启后模型会先推理再优化：结果更细致，但耗时更长（可能十几秒到一分钟）。推理过程会逐字展示在下一步，可展开查看。"
+                : "管理员已在系统设置中关闭「深度思考」能力"
+            }
+          >
+            <QuestionCircleOutlined
+              style={{ color: "var(--text-3)", cursor: "help" }}
+            />
+          </Tooltip>
+          {!thinking.available && (
+            <span style={{ fontSize: 12, color: "var(--text-3)" }}>
+              已由管理员关闭
+            </span>
+          )}
+        </div>
+
         <Button
           type="primary"
           block

@@ -320,8 +320,47 @@ export interface KnowledgeAskHandlers {
   onDone?: (result: { answer: string; chunks: RetrievedChunk[] }) => void;
   /** 出错（error 事件或网络异常） */
   onError?: (message: string) => void;
-  /** 开始执行（meta 事件） */
-  onStart?: () => void;
+  /**
+   * 开始执行（meta 事件）。
+   *
+   * meta 里带 thinking 标记：本次是否开启深度思考。
+   * 前端据此决定要不要展示「深度思考」面板，避免关闭思考时出现空白思考块。
+   */
+  onStart?: (meta: KnowledgeAskMeta) => void;
+  /**
+   * 模型的深度思考过程（reasoning 事件）。
+   *
+   * 该事件在对应的 node 事件之前到达，且只在模型真的思考过时才有。
+   * 收到即意味着「思考结束」，前端可以据此停止本地计时器。
+   */
+  onReasoning?: (payload: {
+    /** 思考过程全文 */
+    content: string;
+    /** 模型调用耗时毫秒 */
+    reasoningMs: number;
+  }) => void;
+}
+
+/** meta 事件负载 */
+export interface KnowledgeAskMeta {
+  /** 本次执行的深度思考配置（缺省表示后端未开启该能力） */
+  thinking?: {
+    /** 是否开启深度思考 */
+    enabled: boolean;
+    /** 思考强度档位：low / high / max */
+    effort: string;
+  };
+}
+
+/** askKnowledgeStream 的可选参数 */
+export interface AskKnowledgeOptions {
+  /**
+   * 本次是否开启深度思考（会话级意图）。
+   *
+   * 注意这只是「意图」：后端还会叠加全局熔断开关（switch.deep_thinking），
+   * 最终是否真的思考以后端 meta 事件里的 thinking.enabled 为准。
+   */
+  thinking?: boolean;
 }
 
 /**
@@ -330,13 +369,16 @@ export interface KnowledgeAskHandlers {
  * POST /api/ai/knowledge/ask（需 JWT 认证，SSE 返回）
  *
  * 实时回调检索结果和生成回答，实现"先看到检索命中了什么，再看到 AI 回答"。
+ * 开启深度思考时，还会额外回调 onReasoning（思考过程 + 耗时）。
  *
  * @param question - 用户问题
  * @param handlers - 各阶段回调
+ * @param options  - 可选：本次是否开启深度思考
  */
 export async function askKnowledgeStream(
   question: string,
-  handlers: KnowledgeAskHandlers
+  handlers: KnowledgeAskHandlers,
+  options?: AskKnowledgeOptions
 ): Promise<void> {
   const token = getToken();
 
@@ -348,7 +390,9 @@ export async function askKnowledgeStream(
         "Content-Type": "application/json",
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      body: JSON.stringify({ question }),
+      // 显式传布尔值而不是"开启时才带字段"：
+      // 后端只认 === true，显式传 false 语义更清晰，也便于抓包排查
+      body: JSON.stringify({ question, thinking: options?.thinking === true }),
     });
   } catch {
     handlers.onError?.("网络异常，请检查网络连接");
@@ -380,11 +424,12 @@ export async function askKnowledgeStream(
  * 把单个 SSE 事件分发到对应回调。
  *
  * 后端事件类型（见 server/src/routes/ai.routes.ts 的 askKnowledge）：
- *   meta   → 开始
- *   node   → retrieve（chunks）/ generate（answer）
- *   trace  → 节点级 trace（P3 前端暂不展示）
- *   done   → 完成（answer + chunks）
- *   error  → 出错
+ *   meta      → 开始（含 thinking 标记）
+ *   node      → retrieve（chunks）/ generate（answer）
+ *   reasoning → 模型思考过程（content + reasoningMs），先于 generate 的 node 到达
+ *   trace     → 节点级 trace（供 AI Trace 面板展示）
+ *   done      → 完成（answer + chunks）
+ *   error     → 出错
  */
 function dispatchKnowledgeEvent(
   evt: SSEEvent,
@@ -400,7 +445,9 @@ function dispatchKnowledgeEvent(
 
   switch (evt.event) {
     case "meta":
-      handlers.onStart?.();
+      handlers.onStart?.({
+        thinking: payload.thinking as KnowledgeAskMeta["thinking"],
+      });
       break;
 
     case "node": {
@@ -412,6 +459,13 @@ function dispatchKnowledgeEvent(
       }
       break;
     }
+
+    case "reasoning":
+      handlers.onReasoning?.({
+        content: (payload.content as string) ?? "",
+        reasoningMs: (payload.reasoningMs as number) ?? 0,
+      });
+      break;
 
     case "done": {
       handlers.onDone?.({

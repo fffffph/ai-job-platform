@@ -29,6 +29,12 @@ export const JobsStateAnnotation = Annotation.Root({
 
   // 结构化推荐结果（finalize 节点写入一次，last-value-wins 语义）
   recommendations: Annotation<JobRecommendation | null>,
+
+  // ---------- 深度思考 ----------
+  // agent 每轮、finalize 一次：本轮模型思考过程 + 本轮调用耗时。
+  // last-value-wins：路由层在处理某轮的 updates 时读到的是该轮刚写入的值。
+  reasoning: Annotation<string>,
+  reasoningMs: Annotation<number>,
 });
 
 /** 职位发现图状态类型（由 Annotation 推导） */

@@ -47,6 +47,7 @@ import {
   AIMessage,
 } from "@langchain/core/messages";
 import { authMiddleware, requireUser } from "../middleware/auth.js";
+import { loadUserKeyOrFail } from "../middleware/userKey.js";
 import { getDecryptedKey } from "../services/deepseekKey.service.js";
 import multer from "multer";
 import {
@@ -94,8 +95,6 @@ import type {
   JobProfile,
   // 【知识库文件解析】Excel 解析结果类型
   ExcelParseResult,
-  // 【知识库文件解析】文档条目类型
-  KnowledgeDocumentItem,
   // 【P6 新增】trace 事件类型（落库辅助函数签名用）
   TraceEvent,
 } from "../ai/index.js";
@@ -156,50 +155,11 @@ async function saveTraceRunSafely(
 }
 
 /**
- * 读取当前用户的明文 DeepSeek Key，失败时已写出响应并返回 null。
+ * 读取当前用户的明文 DeepSeek Key。
  *
- * 收敛了「按用户取 Key」的两条错误分支（原代码在 4 个接口里各复制一份）：
- * - 读取过程抛异常     → 500 KEY_READ_FAILED
- * - 用户尚未配置 Key   → 403 DEEPSEEK_KEY_NOT_CONFIGURED
- *
- * 调用方式：
- * ```ts
- * const apiKey = await loadUserKeyOrFail(userId, res, MSG);
- * if (!apiKey) return;   // 错误响应已写出
- * ```
- *
- * ⚠️ 必须在写响应头之前调用：SSE 接口要在 createSSEWriter(res) 之前，
- * 否则错误只能通过 SSE 的 error 事件下发，前端拿不到业务错误码。
+ * 已抽到 middleware/userKey.ts 统一维护（简历的流式接口也要用），
+ * 本文件直接 import 使用。
  */
-async function loadUserKeyOrFail(
-  userId: string,
-  res: Response,
-  noKeyMessage: string
-): Promise<string | null> {
-  let apiKey = "";
-  try {
-    apiKey = await getDecryptedKey(userId);
-  } catch (error) {
-    console.error("[AI] 读取 API Key 失败:", (error as Error).message);
-    res.status(500).json({
-      success: false,
-      message: "读取 API Key 失败，请稍后重试",
-      code: "KEY_READ_FAILED",
-    });
-    return null;
-  }
-
-  if (!apiKey) {
-    res.status(403).json({
-      success: false,
-      message: noKeyMessage,
-      code: "DEEPSEEK_KEY_NOT_CONFIGURED",
-    });
-    return null;
-  }
-
-  return apiKey;
-}
 
 /** 节点名称 → 中文提示的映射，用于 SSE 的 node 事件 */
 const NODE_LABELS: Record<string, string> = {
@@ -301,6 +261,7 @@ async function analyzeResume(req: Request, res: Response): Promise<void> {
   const body = (req.body ?? {}) as {
     text?: unknown;
     jobDescription?: unknown;
+    thinking?: unknown;
   };
   const text = typeof body.text === "string" ? body.text.trim() : "";
   const jobDescription =
@@ -314,6 +275,9 @@ async function analyzeResume(req: Request, res: Response): Promise<void> {
     });
     return;
   }
+
+  // 会话级思考开关：严格等于 true 才算开启（可选增强项，传错值不报 400）
+  const requestThinking = body.thinking === true;
 
   // ---------- 阶段 1：读取当前用户 ----------
   const userId = requireUser(req, res);
@@ -333,8 +297,12 @@ async function analyzeResume(req: Request, res: Response): Promise<void> {
     // 【P6】用 runWithTrace 包裹整段图执行：ALS 隔离收集节点级 trace 事件
     const { result, events } = await runWithTrace(runId, async () => {
       // 根据当前用户 Key 构建图（按请求构建，保证 Key 隔离），
-      // 模型参数与 Prompt 由配置中心注入（P3 参数收敛）
-      const graph = buildResumeGraph(apiKey, await loadResumeGraphOptions());
+      // 模型参数与 Prompt 由配置中心注入（P3 参数收敛）；
+      // 思考开关的最终判定（全局熔断 ∩ 会话级）在装配层完成
+      const graphOptions = await loadResumeGraphOptions({
+        thinking: requestThinking,
+      });
+      const graph = buildResumeGraph(apiKey, graphOptions);
 
       const initialState: ResumeState = {
         resumeText: text,
@@ -343,6 +311,8 @@ async function analyzeResume(req: Request, res: Response): Promise<void> {
         match: null,
         suggestions: [],
         messages: [],
+        reasoning: "",
+        reasoningMs: 0,
       };
 
       // 通知客户端开始执行 + 当前阶段提示
@@ -350,6 +320,11 @@ async function analyzeResume(req: Request, res: Response): Promise<void> {
         type: "start",
         message: "开始分析简历",
         hasJobDescription: Boolean(jobDescription),
+        // 【深度思考】告知前端本次是否开启思考（前端据此决定是否展示思考面板）
+        thinking: {
+          enabled: graphOptions.thinking === true,
+          effort: graphOptions.reasoningEffort ?? "high",
+        },
       });
       sse.send("progress", {
         stage: "analyze",
@@ -388,6 +363,21 @@ async function analyzeResume(req: Request, res: Response): Promise<void> {
           } else if (nodeName === "suggest") {
             nodeData.suggestions = update.suggestions ?? [];
             finalSuggestions = update.suggestions ?? [];
+          }
+
+          // 【深度思考】先推思考过程，再推节点结果。
+          // 顺序保证前端状态单向流转（停止计时 → 展示思考 → 渲染结果），
+          // 不会出现「结果先出来、思考块再补上」的跳变。
+          // suggest 节点无 LLM，reasoning 为空自然跳过。
+          const reasoning = update.reasoning ?? "";
+          if (reasoning) {
+            sse.send("reasoning", {
+              nodeName,
+              content: reasoning,
+              reasoningMs: update.reasoningMs ?? 0,
+            });
+            // 该节点确实思考过：把耗时一并带进 node 事件，供 Trace 面板展示
+            nodeData.reasoningMs = update.reasoningMs ?? 0;
           }
 
           sse.send("node", nodeData);
@@ -892,19 +882,27 @@ async function batchImportKnowledge(
  *
  * 知识库问答：检索相关知识 → LLM 增强生成 → 带引用返回，通过 SSE 返回。
  *
- * 请求体：{ "question": "用户问题" }
+ * 请求体：{ "question": "用户问题", "thinking"?: true }
  *
  * SSE 事件流（P3）：
- *   meta  → 开始执行
- *   node  → retrieve 完成（含 chunks 检索结果）
- *   node  → generate 完成（含 answer 带引用回答）
- *   trace → 节点级 trace 事件
- *   done  → 完成（含 answer + chunks）
- *   error → 出错
+ *   meta      → 开始执行（含 thinking 标记：本次是否开启深度思考）
+ *   node      → retrieve 完成（含 chunks 检索结果）
+ *   reasoning → generate 的思考过程（含 content 思考全文 + reasoningMs 耗时）
+ *   node      → generate 完成（含 answer 带引用回答、reasoningMs）
+ *   trace     → 节点级 trace 事件
+ *   done      → 完成（含 answer + chunks）
+ *   error     → 出错
+ *
+ * 【深度思考（P1）】
+ * - 顺序：reasoning 事件先于对应的 node 事件下发，保证前端状态流转是单向的
+ *   （停止计时 → 展示思考 → 渲染答案），不会出现答案先出来、思考块再补上的跳变；
+ * - 开关：请求体 thinking 为「会话级」意图，还需通过配置项
+ *   switch.deep_thinking 的全局熔断，二者都满足才会真正思考（见 ai-config.ts）；
+ * - meta 事件会把最终判定结果回给前端，前端不必自己推断，避免前后端判定不一致。
  */
 async function askKnowledge(req: Request, res: Response): Promise<void> {
   // ---------- 阶段 1：参数校验 ----------
-  const body = (req.body ?? {}) as { question?: unknown };
+  const body = (req.body ?? {}) as { question?: unknown; thinking?: unknown };
   const question =
     typeof body.question === "string" ? body.question.trim() : "";
 
@@ -916,6 +914,10 @@ async function askKnowledge(req: Request, res: Response): Promise<void> {
     });
     return;
   }
+
+  // 会话级思考开关：只有严格等于 true 才算开启，其余（未传/false/字符串）一律视为不开启。
+  // 这里不做 400 报错：开关是可选增强项，传错值不该让整次问答失败。
+  const requestThinking = body.thinking === true;
 
   // ---------- 阶段 1：读取当前用户 ----------
   const userId = requireUser(req, res);
@@ -935,20 +937,32 @@ async function askKnowledge(req: Request, res: Response): Promise<void> {
     // 【P6】用 runWithTrace 包裹整段图执行：ALS 隔离收集节点级 trace 事件
     const { result, events } = await runWithTrace(runId, async () => {
       // 根据当前用户 Key 构建 RAG 图（按请求构建，保证 Key 隔离），
-      // 模型/检索参数/Prompt 由配置中心注入（P3 参数收敛）
-      const graph = buildRagGraph(apiKey, await loadRagGraphOptions());
+      // 模型/检索参数/Prompt 由配置中心注入（P3 参数收敛）；
+      // 思考开关的最终判定（全局熔断 ∩ 会话级）在装配层完成
+      const graphOptions = await loadRagGraphOptions({
+        thinking: requestThinking,
+      });
+      const graph = buildRagGraph(apiKey, graphOptions);
 
       const initialState: RAGState = {
         question,
         userId,
         chunks: [],
         answer: "",
+        reasoning: "",
+        reasoningMs: 0,
       };
 
       // 通知客户端开始执行
       sse.send("meta", {
         type: "start",
         message: "开始知识库检索问答",
+        // 【深度思考】告知前端本次是否开启思考，前端据此决定要不要展示思考面板；
+        // 开启时前端会立即启动本地计时器，让用户"感觉到它在思考"
+        thinking: {
+          enabled: graphOptions.thinking === true,
+          effort: graphOptions.reasoningEffort ?? "high",
+        },
       });
 
       // 结构化输出为非流式，只用 updates 模式取节点完成时的结构化结果
@@ -974,11 +988,27 @@ async function askKnowledge(req: Request, res: Response): Promise<void> {
           } else if (nodeName === "generate") {
             // 【P3 修正】节点名为 generate（图内避免与 state 字段 answer 冲突）
             finalAnswer = update.answer ?? "";
+            const reasoning = update.reasoning ?? "";
+            const reasoningMs = update.reasoningMs ?? 0;
+
+            // 【深度思考】先推思考过程，再推回答。
+            // 以「思考文本是否为空」作为是否真的思考过的判据：
+            // 关闭思考时模型不会返回 reasoning_content，也就不会打扰前端。
+            if (reasoning) {
+              sse.send("reasoning", {
+                nodeName: "generate",
+                content: reasoning,
+                reasoningMs,
+              });
+            }
+
             sse.send("node", {
               nodeName: "generate",
               done: true,
               message: "带引用回答生成完成",
               answer: finalAnswer,
+              // 仅在真的思考过时附带耗时，避免前端把普通生成误显示成"深度思考"
+              ...(reasoning ? { reasoningMs } : {}),
             });
           }
         }
@@ -1040,7 +1070,11 @@ async function recommendJobs(req: Request, res: Response): Promise<void> {
     city?: unknown;
     skills?: unknown;
     expectedSalary?: unknown;
+    thinking?: unknown;
   };
+
+  // 会话级思考开关：严格等于 true 才算开启（可选增强项，传错值不报 400）
+  const requestThinking = body.thinking === true;
   let city = typeof body.city === "string" ? body.city.trim() : "";
   let skills = typeof body.skills === "string" ? body.skills.trim() : "";
   let expectedSalary =
@@ -1068,9 +1102,10 @@ async function recommendJobs(req: Request, res: Response): Promise<void> {
   try {
     // 【P6】用 runWithTrace 包裹整段图执行：ALS 隔离收集节点级 trace 事件
     const { result, events } = await runWithTrace(runId, async () => {
-      // 【P3 参数收敛】读取职位发现配置：模型/推荐参数 + 模板化 Agent 人设 Prompt
+      // 【P3 参数收敛】读取职位发现配置：模型/推荐参数 + 模板化 Agent 人设 Prompt；
+      // 思考开关的最终判定（全局熔断 ∩ 会话级）在装配层完成
       const { graph: jobsGraphOptions, jobAgentPrompt } =
-        await loadJobsGraphOptions();
+        await loadJobsGraphOptions({ thinking: requestThinking });
 
       // 组装求职意向描述（作为 HumanMessage 注入 Agent 上下文）
       const intentParts: string[] = [];
@@ -1089,10 +1124,20 @@ async function recommendJobs(req: Request, res: Response): Promise<void> {
           new HumanMessage(intent),
         ],
         recommendations: null,
+        reasoning: "",
+        reasoningMs: 0,
       };
 
       // 通知客户端开始执行
-      sse.send("meta", { type: "start", message: "开始职位发现" });
+      sse.send("meta", {
+        type: "start",
+        message: "开始职位发现",
+        // 【深度思考】告知前端本次是否开启思考（前端据此决定是否展示思考面板）
+        thinking: {
+          enabled: jobsGraphOptions.thinking === true,
+          effort: jobsGraphOptions.reasoningEffort ?? "high",
+        },
+      });
 
       // 根据当前用户 Key 构建 ReAct 图（按请求构建，保证 Key 隔离），
       // 传入用户画像供 finalize 节点做个性化结构化推荐，模型/推荐参数由配置注入
@@ -1112,6 +1157,20 @@ async function recommendJobs(req: Request, res: Response): Promise<void> {
         const updateMap = updates as Record<string, Partial<JobsState>>;
 
         for (const [nodeName, update] of Object.entries(updateMap)) {
+          // 【深度思考】先推本轮的思考过程，再推节点结果。
+          // ReAct 循环里 agent 会执行多轮，因此前端应把多个 reasoning 事件
+          // 累积成列表展示，而不是只保留最后一个。
+          // tools 节点无 LLM，reasoning 为空自然跳过。
+          const reasoning = update.reasoning ?? "";
+          const reasoningMs = update.reasoningMs ?? 0;
+          if (reasoning) {
+            sse.send("reasoning", {
+              nodeName,
+              content: reasoning,
+              reasoningMs,
+            });
+          }
+
           if (nodeName === "agent") {
             // agent 节点：推送本轮决策结果（调用工具 / 结束搜索）
             const newMessages = update.messages ?? [];
@@ -1126,6 +1185,8 @@ async function recommendJobs(req: Request, res: Response): Promise<void> {
               done: true,
               message: hasToolCalls ? "Agent 正在搜索职位…" : "搜索完成，正在生成推荐…",
               action: hasToolCalls ? "call_tools" : "answer",
+              // 仅在本轮真的思考过时带上耗时
+              ...(reasoning ? { reasoningMs } : {}),
             });
           } else if (nodeName === "tools") {
             sse.send("node", {
@@ -1142,6 +1203,7 @@ async function recommendJobs(req: Request, res: Response): Promise<void> {
               message: "推荐生成完成",
               recommendationCount:
                 finalRecommendation?.recommendations.length ?? 0,
+              ...(reasoning ? { reasoningMs } : {}),
             });
           }
         }

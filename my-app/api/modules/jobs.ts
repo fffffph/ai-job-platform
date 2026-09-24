@@ -20,6 +20,7 @@ import type {
   ApiResponse,
   JobProfile,
   TraceEvent,
+  ReasoningEntry,
   JobRecommendation,
 } from "../types";
 
@@ -36,10 +37,16 @@ export interface JobIntent {
   expectedSalary: string;
 }
 
+/** meta 事件负载（本次执行的深度思考配置） */
+export interface JobRecommendMeta {
+  /** 缺省表示后端未开启该能力 */
+  thinking?: { enabled: boolean; effort: string };
+}
+
 /** 职位推荐 SSE 事件的回调集合 */
 export interface JobRecommendHandlers {
-  /** 开始执行 */
-  onStart?: () => void;
+  /** 开始执行（meta 事件，含本次是否开启深度思考） */
+  onStart?: (meta: JobRecommendMeta) => void;
   /** Agent 完成一轮决策（action=call_tools 表示继续搜，answer 表示停止搜索） */
   onAgentAction?: (action: "call_tools" | "answer", message: string) => void;
   /** 工具执行完成（已获取一批职位数据） */
@@ -48,10 +55,27 @@ export interface JobRecommendHandlers {
   onFinalize?: (recommendationCount: number) => void;
   /** 节点级 trace 事件（P6 可观测，供 AI Trace 面板展示决策过程） */
   onTrace?: (events: TraceEvent[]) => void;
+  /**
+   * 深度思考的一段推理过程（reasoning 事件）。
+   *
+   * ReAct 循环里 agent 会执行多轮，因此该回调可能被调用多次，
+   * 调用方应累积成数组展示，不要只保留最后一段。
+   */
+  onReasoning?: (entry: ReasoningEntry) => void;
   /** 最终结构化推荐结果（含推荐原因/招呼语/直达链接） */
   onRecommendations?: (result: JobRecommendation | null) => void;
   /** 出错 */
   onError?: (message: string) => void;
+}
+
+/** recommendJobsStream 的可选参数 */
+export interface RecommendJobsOptions {
+  /**
+   * 本次是否开启深度思考（会话级意图）。
+   *
+   * 后端还会叠加全局熔断开关，最终是否真的思考以后端 meta 事件回传为准。
+   */
+  thinking?: boolean;
 }
 
 /**
@@ -61,10 +85,12 @@ export interface JobRecommendHandlers {
  *
  * @param intent   - 求职意向（城市/技能/期望薪资）
  * @param handlers - 各阶段回调
+ * @param options  - 可选：本次是否开启深度思考
  */
 export async function recommendJobsStream(
   intent: JobIntent,
-  handlers: JobRecommendHandlers
+  handlers: JobRecommendHandlers,
+  options?: RecommendJobsOptions
 ): Promise<void> {
   const token = getToken();
 
@@ -76,7 +102,9 @@ export async function recommendJobsStream(
         "Content-Type": "application/json",
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      body: JSON.stringify(intent),
+      // 显式传布尔值而不是"开启时才带字段"：后端只认 === true，
+      // 显式传 false 语义更清晰，也便于抓包排查
+      body: JSON.stringify({ ...intent, thinking: options?.thinking === true }),
     });
   } catch {
     handlers.onError?.("网络异常，请检查网络连接");
@@ -108,11 +136,12 @@ export async function recommendJobsStream(
  * 把单个 SSE 事件分发到对应回调。
  *
  * 后端事件类型（见 server/src/routes/ai.routes.ts 的 recommendJobs）：
- *   meta  → 开始
- *   node  → agent（action=call_tools/answer）/ tools
- *   trace → 节点级 trace（P4 前端暂不展示，可后续接入 AI Trace 面板）
- *   done  → 完成（含 answer 推荐文本）
- *   error → 出错
+ *   meta      → 开始（含 thinking 标记）
+ *   reasoning → 本轮思考过程（content + reasoningMs），先于对应 node 到达
+ *   node      → agent（action=call_tools/answer）/ tools / finalize
+ *   trace     → 节点级 trace（供 AI Trace 面板展示决策过程）
+ *   done      → 完成（含结构化推荐）
+ *   error     → 出错
  */
 function dispatchJobsEvent(
   evt: SSEEvent,
@@ -127,7 +156,17 @@ function dispatchJobsEvent(
 
   switch (evt.event) {
     case "meta":
-      handlers.onStart?.();
+      handlers.onStart?.({
+        thinking: payload.thinking as JobRecommendMeta["thinking"],
+      });
+      break;
+
+    case "reasoning":
+      handlers.onReasoning?.({
+        nodeName: payload.nodeName as string | undefined,
+        content: (payload.content as string) ?? "",
+        reasoningMs: (payload.reasoningMs as number) ?? 0,
+      });
       break;
 
     case "node": {

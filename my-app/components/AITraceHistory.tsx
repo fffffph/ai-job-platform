@@ -129,7 +129,21 @@ const AITraceHistory: React.FC = () => {
   }, [message]);
 
   useEffect(() => {
-    load();
+    // 首次进入加载历史列表。
+    //
+    // 这里用 async 包裹并 await，而不是直接在 effect 体内调用：load 的第一条
+    // 语句就是 setLoading(true)，同步调用会引发级联渲染
+    // （react-hooks/set-state-in-effect）；放进 await 之后状态更新落在微任务里，
+    // 不再阻塞本次渲染提交。cancelled 用于组件已卸载时跳过写入。
+    let cancelled = false;
+    void (async () => {
+      await load();
+      if (cancelled) return;
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [load]);
 
   /**

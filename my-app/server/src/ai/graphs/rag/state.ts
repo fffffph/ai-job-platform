@@ -11,6 +11,8 @@
  * - userId   ：当前用户 ID（检索时按用户隔离知识库）
  * - chunks   ：检索命中的知识库分块（retrieve 节点产出，answer 节点消费）
  * - answer   ：带引用的最终回答（answer 节点产出）
+ * - reasoning    ：模型思考过程全文（generate 节点产出；未开启思考时为空串）
+ * - reasoningMs  ：模型调用耗时毫秒（generate 节点产出，供前端展示「已思考 N 秒」）
  */
 
 import { Annotation } from "@langchain/langgraph";
@@ -23,6 +25,13 @@ export const RAGStateAnnotation = Annotation.Root({
   question: Annotation<string>,
   userId: Annotation<string>,
   answer: Annotation<string>,
+
+  // ---------- 深度思考（Thinking Mode） ----------
+  // 由 generate 节点写入，路由层读取后通过 SSE 的 reasoning 事件推给前端。
+  // 放在 state 里是为了让路由层能在「节点完成的那一刻」就拿到结果；
+  // 若只写进 trace 事件，则要等整张图执行完才能取到，前端体验会差很多。
+  reasoning: Annotation<string>,
+  reasoningMs: Annotation<number>,
 
   // ---------- 数组字段（检索结果整体覆盖，last-write-wins 语义） ----------
   // chunks 只由 retrieve 节点写入一次，answer 节点只读，因此 reducer 直接返回新值即可

@@ -29,6 +29,7 @@ import { loadMicroApp, type MicroApp } from 'qiankun';
 import { Spin, Alert, Button } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
 import { getToken, setToken, removeToken } from '@/api';
+import { getConfigValue } from '@/lib/app-config';
 
 // ========== 子应用配置 ==========
 
@@ -118,6 +119,19 @@ const MicroAppLoader: React.FC = () => {
             setToken,
             removeToken,
             isInQiankun: true,
+
+            /**
+             * 配置共享机制 — 子应用据此读取主应用的配置中心。
+             *
+             * 传的是「函数」而不是「配置快照」：函数内部读的是主应用的
+             * window.appConfig 单例，配置热更新（管理员在设置页改完）后
+             * 子应用下次调用就能拿到新值，无需 app.update() 重新下发 props。
+             *
+             * 注意：必须包一层箭头函数。直接把 getConfigValue 传过去会因为
+             * 跨沙箱调用丢失 this 绑定（该方法内部依赖 window.appConfig）。
+             */
+            getConfigValue: <T,>(key: string, defaultValue: T): T =>
+              getConfigValue(key, defaultValue),
 
             // 其他业务标识
             appName: 'CareerAI',

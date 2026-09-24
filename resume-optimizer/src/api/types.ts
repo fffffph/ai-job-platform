@@ -61,6 +61,16 @@ export interface ChangeItem {
 export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
+  /**
+   * 该条助手消息生成时的深度思考过程。
+   *
+   * 挂在消息上而不是单独存一份全局状态，是因为多轮对话里每一轮各有自己的
+   * 思考链；只有跟着消息走，用户回看历史时才不会张冠李戴。
+   * 用户消息与未开启思考的轮次都没有该字段。
+   */
+  reasoning?: string;
+  /** 该轮思考耗时（毫秒），用于展示「已深度思考 N 秒」 */
+  reasoningMs?: number;
 }
 
 export interface SectionContext {

@@ -22,6 +22,7 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./public-path";
 import { initAuth } from "./utils/auth";
+import { initAppConfig, type ConfigGetter } from "./utils/app-config";
 import { renderWithQiankun, qiankunWindow } from "vite-plugin-qiankun/dist/helper";
 
 /**
@@ -34,6 +35,7 @@ import { renderWithQiankun, qiankunWindow } from "vite-plugin-qiankun/dist/helpe
  * - setToken: 存储/更新 Token 的回调函数
  * - removeToken: 清除 Token 的回调函数
  * - isInQiankun: 标识符，标记当前运行在 qiankun 环境
+ * - getConfigValue: 读取主应用配置中心的回调（含 AI 功能开关）
  */
 interface QiankunProps {
   container?: HTMLElement;
@@ -42,6 +44,8 @@ interface QiankunProps {
   setToken?: (token: string) => void;
   removeToken?: () => void;
   isInQiankun?: boolean;
+  /** 主应用注入的配置读取函数（见 utils/app-config.ts） */
+  getConfigValue?: ConfigGetter;
   [key: string]: any;
 }
 
@@ -57,6 +61,10 @@ let root: ReactDOM.Root | null = null;
  * @param props - qiankun 传入的 props，或空对象（独立模式）
  */
 function render(props: QiankunProps = {}) {
+  // ---------- 初始化配置读取 ----------
+  // 注册主应用传入的取值函数；未传入（独立模式）时清空，走 window 兜底或默认值
+  initAppConfig(props.getConfigValue);
+
   // ---------- 初始化认证工具 ----------
   // 从 qiankun props 中提取认证相关字段，注入 auth 工具
   if (props.isInQiankun) {
@@ -66,7 +74,12 @@ function render(props: QiankunProps = {}) {
       setToken: props.setToken,
       removeToken: props.removeToken,
     });
-    console.log("[resume-optimizer] Auth 工具已初始化（qiankun 模式），token:", props.token ? "已获取" : "无");
+    console.log(
+      "[resume-optimizer] Auth 工具已初始化（qiankun 模式），token:",
+      props.token ? "已获取" : "无",
+      "| 配置读取:",
+      props.getConfigValue ? "已注入" : "未注入（将走默认值）"
+    );
   } else {
     console.log("[resume-optimizer] 独立模式启动，将使用独立登录");
   }

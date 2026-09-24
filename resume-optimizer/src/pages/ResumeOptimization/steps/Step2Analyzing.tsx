@@ -11,6 +11,7 @@ import React from "react";
 import { Spin, Button } from "antd";
 import { ArrowLeftOutlined, ReloadOutlined, KeyOutlined } from "@ant-design/icons";
 import { motion } from "framer-motion";
+import ThinkingPanel from "../../../components/ThinkingPanel";
 
 interface Props {
   error?: string | null;
@@ -20,6 +21,13 @@ interface Props {
   onRetry?: () => void;
   /** 跳转到个人中心配置 API Key */
   onGoConfig?: () => void;
+  // ---------- 深度思考（逐字流式） ----------
+  /** 是否正在思考（后端 meta 判定） */
+  thinkingActive?: boolean;
+  /** 已到达的思考过程全文（增量累积） */
+  thinkingContent?: string;
+  /** 本轮思考总耗时（完成后回填） */
+  thinkingMs?: number;
 }
 
 const Step2Analyzing: React.FC<Props> = ({
@@ -28,6 +36,9 @@ const Step2Analyzing: React.FC<Props> = ({
   onBack,
   onRetry,
   onGoConfig,
+  thinkingActive,
+  thinkingContent,
+  thinkingMs,
 }) => {
   if (error) {
     return (
@@ -119,6 +130,17 @@ const Step2Analyzing: React.FC<Props> = ({
       >
         <div style={{ padding: 48 }} />
       </Spin>
+
+      {/* 深度思考过程：逐字流式展示。
+          仅在本次确实开启了思考时出现（后端 meta 判定），
+          未开启时不会多出空白块。 */}
+      {(thinkingActive || thinkingContent) && (
+        <ThinkingPanel
+          active={thinkingActive === true}
+          content={thinkingContent ?? ""}
+          elapsedMs={thinkingMs}
+        />
+      )}
 
       <style>{`
         @keyframes ping {

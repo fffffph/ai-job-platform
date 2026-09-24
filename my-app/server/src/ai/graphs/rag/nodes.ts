@@ -15,6 +15,7 @@
 
 import type { ChatOpenAI } from "@langchain/openai";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
+import { readReasoningContent } from "../../llm/deepseek.js";
 import type { RAGState } from "./state.js";
 import { collectTrace } from "../../trace/tracer.js";
 import {
@@ -147,20 +148,37 @@ export function createAnswerNode(
     ];
 
     let answer: string;
+    // 思考链直接从返回的消息上读（见 llm/deepseek.ts 的设计复盘：
+    // bindTools / withStructuredOutput 会绕开实例方法，实例状态不可靠）
+    let reasoning = "";
+    // 模型调用耗时。注意：非流式调用下无法把「思考」与「作答」拆开计时，
+    // 因此该值是两者之和——开启思考时它基本等于思考耗时（作答占比很小）。
+    let reasoningMs = 0;
     try {
+      const callStartedAt = Date.now();
       const res = await llm.invoke(messages);
+      reasoningMs = Date.now() - callStartedAt;
+      reasoning = readReasoningContent(res);
       answer = normalizeContent(res.content);
     } catch (error) {
       const detail = (error as Error).message || "未知原因";
       throw new Error(`RAG 回答生成失败：${detail}`);
     }
 
-    const output: Partial<RAGState> = { answer };
+    // 【可观测】思考链长度是排查「开关开了但看不到内容」的第一手线索：
+    // reasoningChars 恒为 0 说明模型根本没吐思考链（参数/模型不支持），
+    // 而不是前端展示问题。
+    console.log(
+      `[AI][thinking] node=generate callMs=${reasoningMs} reasoningChars=${reasoning.length}`
+    );
+
+    const output: Partial<RAGState> = { answer, reasoning, reasoningMs };
 
     collectTrace({
       nodeName: "answer",
       input: { question: state.question, chunkCount: state.chunks.length },
-      output: { answer },
+      // 只记录思考的「规模」而非全文：思考链动辄上千字，全量落库会让 trace 表迅速膨胀
+      output: { answer, reasoningMs, reasoningChars: reasoning.length },
       durationMs: Date.now() - startedAt,
       timestamp: new Date().toISOString(),
     });

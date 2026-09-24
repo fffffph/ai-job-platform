@@ -29,7 +29,10 @@
  */
 
 import { StateGraph, START, END } from "@langchain/langgraph";
-import { createDeepSeekChat } from "../../llm/deepseek.js";
+import {
+  createDeepSeekChat,
+  type DeepSeekReasoningEffort,
+} from "../../llm/deepseek.js";
 import { ResumeStateAnnotation, type ResumeState } from "./state.js";
 import {
   parseNode,
@@ -56,6 +59,15 @@ export interface ResumeGraphOptions extends ResumeNodePrompts {
   maxTokens?: number;
   /** 请求超时毫秒（默认 60000，配置项 llm.timeout_ms） */
   timeout?: number;
+  /**
+   * 是否开启深度思考（Thinking Mode）。
+   *
+   * 由装配层按「全局熔断 ∩ 会话级开关」判定后传入；显式传 false 会向模型
+   * 下发关闭指令（服务端默认开启思考，不显式关掉就省不下时间与费用）。
+   */
+  thinking?: boolean;
+  /** 思考强度档位（仅在 thinking 为 true 时下发） */
+  reasoningEffort?: DeepSeekReasoningEffort;
 }
 
 /**
@@ -86,6 +98,8 @@ export function buildResumeGraph(
     temperature: options?.temperature,
     maxTokens: options?.maxTokens,
     timeout: options?.timeout,
+    thinking: options?.thinking,
+    reasoningEffort: options?.reasoningEffort,
   });
 
   // 注入模型实例到 LLM 节点（闭包），节点函数保持无副作用；

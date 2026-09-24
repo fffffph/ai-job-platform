@@ -40,6 +40,8 @@ export {
 } from "./modules/knowledge";
 export type {
   KnowledgeAskHandlers,
+  KnowledgeAskMeta,
+  AskKnowledgeOptions,
   DownloadResult,
   ParseTextResult,
   KnowledgeFileInfoResult,
@@ -47,7 +49,12 @@ export type {
 
 // 职位发现模块（ReAct Agent）
 export { recommendJobsStream } from "./modules/jobs";
-export type { JobIntent, JobRecommendHandlers } from "./modules/jobs";
+export type {
+  JobIntent,
+  JobRecommendHandlers,
+  JobRecommendMeta,
+  RecommendJobsOptions,
+} from "./modules/jobs";
 
 // 求职画像模块（P5 Memory）
 export { getJobProfileApi, saveJobProfileApi } from "./modules/jobs";
@@ -73,6 +80,7 @@ export type {
   ApiResponse,
   ApiSuccessResponse,
   ApiErrorResponse,
+  ReasoningEntry,
   AuthResult,
   UserProfile,
   UpdateProfileParams,

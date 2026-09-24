@@ -61,6 +61,7 @@ const ResumeOptimizationPage: React.FC = () => {
             onOptimize={() => {
               if (hasResume()) conv.startOptimize();
             }}
+            thinking={conv.thinking}
           />
         )}
 
@@ -68,6 +69,9 @@ const ResumeOptimizationPage: React.FC = () => {
           <Step2Analyzing
             error={conv.error}
             needApiKey={conv.needApiKey}
+            thinkingActive={conv.thinkingActive}
+            thinkingContent={conv.thinkingContent}
+            thinkingMs={conv.thinkingMs}
             onBack={() => {
               conv.reset();
               conv.goToStep(1);
@@ -96,6 +100,10 @@ const ResumeOptimizationPage: React.FC = () => {
             changes={conv.changes}
             isStreaming={conv.isStreaming}
             onSend={conv.sendMessage}
+            thinkingActive={conv.thinkingActive}
+            thinkingContent={conv.thinkingContent}
+            thinkingMs={conv.thinkingMs}
+            optimizeThinking={conv.optimizeThinking}
             onRollback={conv.rollback}
             onBack={() => conv.goToStep(1)}
             onNextStep={() => conv.goToStep(4)}

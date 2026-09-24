@@ -18,6 +18,7 @@
  */
 
 import type { ChatOpenAI } from "@langchain/openai";
+import { readReasoningContent } from "../../llm/deepseek.js";
 import {
   AIMessage,
   ToolMessage,
@@ -59,11 +60,23 @@ export function createAgentNode(
     const startedAt = Date.now();
 
     // 直接以当前消息流为上下文调用模型（system prompt 已由路由层注入为第一条消息）
+    const callStartedAt = Date.now();
     const response = await llmWithTools.invoke(state.messages);
+    const reasoningMs = Date.now() - callStartedAt;
 
     // 提取本次决策的关键信息用于 trace（避免打印完整消息流导致日志过长）
     const toolCalls = (response as AIMessage).tool_calls ?? [];
     const hasToolCalls = toolCalls.length > 0;
+
+    // 本轮思考链直接从返回消息上读：bindTools 返回的是独立 Runnable，
+    // 走不到我们可能覆写的实例方法上（详见 llm/deepseek.ts 的设计复盘）
+    const reasoning = readReasoningContent(response);
+
+    // 【可观测】reasoningChars 恒为 0 说明模型没吐思考链（参数/模型不支持），
+    // 而不是前端展示问题；每轮 agent 都打一条，便于看清多轮之间的差异
+    console.log(
+      `[AI][thinking] node=agent callMs=${reasoningMs} reasoningChars=${reasoning.length}`
+    );
 
     collectTrace({
       nodeName: "agent",
@@ -75,13 +88,20 @@ export function createAgentNode(
               name: c.name,
               args: c.args,
             })),
+            reasoningMs,
+            reasoningChars: reasoning.length,
           }
-        : { action: "answer", content: String(response.content).slice(0, 200) },
+        : {
+            action: "answer",
+            content: String(response.content).slice(0, 200),
+            reasoningMs,
+            reasoningChars: reasoning.length,
+          },
       durationMs: Date.now() - startedAt,
       timestamp: new Date().toISOString(),
     });
 
-    return { messages: [response] };
+    return { messages: [response], reasoning, reasoningMs };
   };
 }
 
@@ -252,6 +272,10 @@ export function createFinalizeNode(
   options?: { maxRecommend?: number; greetingMaxLen?: number }
 ) {
   // DeepSeek 结构化输出必须用 functionCalling（不支持 response_format）
+  //
+  // ⚠️ functionCalling 会强制 tool_choice，而 DeepSeek 思考模式不支持
+  // tool_choice（会 400）。因此传进来的 llm 必须是「已关闭思考」的实例；
+  // 见 graphs/jobs/graph.ts 里 structuredLlm 的构造与 llm/deepseek.ts 的能力边界。
   const structuredLlm = llm.withStructuredOutput(JobRecommendationSchema, {
     method: "functionCalling",
   });
@@ -308,6 +332,7 @@ export function createFinalizeNode(
       timestamp: new Date().toISOString(),
     });
 
+    // 本节点固定关闭思考（functionCalling 与思考模式互斥），故不产出思考链
     return { recommendations: result };
   };
 }

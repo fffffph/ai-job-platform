@@ -20,7 +20,7 @@
  */
 
 import React from "react";
-import { Card, Timeline, Tag, Space, Typography, Collapse, Empty } from "antd";
+import { Card, Timeline, Tag, Space, Typography, Collapse } from "antd";
 import { ClockCircleOutlined } from "@ant-design/icons";
 import type { TraceEvent } from "@/api";
 
@@ -63,13 +63,32 @@ function durationColor(ms: number): string {
   return "red";
 }
 
-/** 从节点 output 中提取一句简短动作描述（尽力而为） */
+/**
+ * 从节点 output 中提取一句简短动作描述（尽力而为）。
+ *
+ * 【深度思考】若该节点确实思考过，输出里会带 reasoningMs（后端节点埋点写入），
+ * 这里把「其中的思考耗时」缀在摘要后面，让用户看清慢在哪：
+ * 是检索慢、工具慢，还是模型推理慢。
+ */
 function summarizeOutput(output: unknown): string {
   if (!output || typeof output !== "object") {
     return "";
   }
   const o = output as Record<string, unknown>;
 
+  const base = summarizeAction(o);
+  const reasoningMs = o.reasoningMs;
+
+  if (typeof reasoningMs === "number" && reasoningMs > 0) {
+    const thinking = `含思考 ${(reasoningMs / 1000).toFixed(1)}s`;
+    return base ? `${base} · ${thinking}` : thinking;
+  }
+
+  return base;
+}
+
+/** 节点 output → 动作摘要（不含思考耗时，由 summarizeOutput 负责拼接） */
+function summarizeAction(o: Record<string, unknown>): string {
   if (typeof o.action === "string") {
     if (o.action === "call_tools") {
       const calls = o.toolCalls as Array<{ name?: string }> | undefined;

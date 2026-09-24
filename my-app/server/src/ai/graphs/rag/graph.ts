@@ -22,7 +22,10 @@
  */
 
 import { StateGraph, START, END } from "@langchain/langgraph";
-import { createDeepSeekChat } from "../../llm/deepseek.js";
+import {
+  createDeepSeekChat,
+  type DeepSeekReasoningEffort,
+} from "../../llm/deepseek.js";
 import { RAGStateAnnotation } from "./state.js";
 import { createRetrieveNode, createAnswerNode } from "./nodes.js";
 import {
@@ -45,6 +48,16 @@ export interface RagGraphOptions {
   maxTokens?: number;
   /** 请求超时毫秒（默认 60000，配置项 llm.timeout_ms） */
   timeout?: number;
+  /**
+   * 是否开启深度思考（Thinking Mode）。
+   *
+   * 由装配层（loadRagGraphOptions）按「全局熔断 ∩ 会话级开关」判定后传入，
+   * 路由层不直接决定；显式传 false 时会向模型下发关闭指令，
+   * 因为服务端默认是开启思考的，不显式关掉就省不下时间与费用。
+   */
+  thinking?: boolean;
+  /** 思考强度档位（仅在 thinking 为 true 时下发，缺省由服务端取 high） */
+  reasoningEffort?: DeepSeekReasoningEffort;
   // —— 检索参数 ——
   /** 检索条数（默认 5，配置项 rag.top_k） */
   topK?: number;
@@ -75,6 +88,8 @@ export function buildRagGraph(apiKey: string, options?: RagGraphOptions) {
     temperature: options?.temperature,
     maxTokens: options?.maxTokens,
     timeout: options?.timeout,
+    thinking: options?.thinking,
+    reasoningEffort: options?.reasoningEffort,
   });
 
   // 检索参数（候选召回倍数/检索词加权/超时/混合检索开关）由配置中心注入

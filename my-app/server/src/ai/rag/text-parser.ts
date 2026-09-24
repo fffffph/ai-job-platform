@@ -149,6 +149,13 @@ export interface ParseTextLLMOptions {
   maxTokens?: number;
   /** 请求超时毫秒（默认 60000，配置项 llm.timeout_ms） */
   timeout?: number;
+  /**
+   * 是否开启深度思考。
+   *
+   * 文本解析是纯工具型任务（把粘贴文本整理成结构化条目），没有"思考过程"
+   * 的用户价值，因此装配层固定传 false：显式关闭，省 token 也避免额外延迟。
+   */
+  thinking?: boolean;
 }
 
 /**
@@ -169,6 +176,7 @@ export async function parseTextWithLLM(
     temperature: options?.temperature,
     maxTokens: options?.maxTokens,
     timeout: options?.timeout,
+    thinking: options?.thinking,
   };
   const llm = createDeepSeekChat(apiKey, llmOptions);
   // DeepSeek 结构化输出必须用 functionCalling（不支持 response_format）
