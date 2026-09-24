@@ -22,6 +22,7 @@ import authRouter from "./routes/auth.routes.js";
 import userRouter from "./routes/user.routes.js";
 import resumeRouter from "./routes/resume.routes.js";
 import aiRouter from "./routes/ai.routes.js";
+import configRouter from "./routes/config.routes.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -144,6 +145,19 @@ app.use("/api/resume", resumeRouter);
  * - POST /api/ai/resume/analyze — AI 流式分析简历（需认证，SSE 逐 token 返回）
  */
 app.use("/api/ai", aiRouter);
+
+/**
+ * 系统配置路由
+ *
+ * 所有 /api/config/* 路径的请求都交给 configRouter 处理：
+ * - GET    /api/config        — 全部配置项有效状态（所有登录用户）
+ * - GET    /api/config/:key   — 单读配置项（所有登录用户）
+ * - PUT    /api/config        — 批量保存覆盖值（仅 admin）
+ * - PUT    /api/config/:key   — 单条保存覆盖值（仅 admin）
+ * - DELETE /api/config        — 全部恢复默认（仅 admin）
+ * - DELETE /api/config/:key   — 单条恢复默认（仅 admin）
+ */
+app.use("/api/config", configRouter);
 
 // ============================================================
 // 全局错误处理

@@ -21,6 +21,7 @@ import {
   retrieveChunks,
   DEFAULT_TOP_K,
   type RetrievedChunk,
+  type RetrieveOptions,
 } from "../../rag/retrieval/retriever.js";
 
 /** 回答节点的系统 Prompt：要求模型只依据检索结果、并标注引用来源 */
@@ -83,17 +84,26 @@ function normalizeContent(content: unknown): string {
 /**
  * 创建检索节点（工厂函数）。
  *
- * 通过闭包注入 topK，节点内部调用 retriever 做向量检索。
+ * 通过闭包注入 topK 与检索参数，节点内部调用 retriever 做向量检索。
  *
  * @param topK - 检索条数（默认 5）
+ * @param retrieveOptions - 可选：候选召回倍数/检索词加权/超时（P3 参数收敛）
  */
-export function createRetrieveNode(topK: number = DEFAULT_TOP_K) {
+export function createRetrieveNode(
+  topK: number = DEFAULT_TOP_K,
+  retrieveOptions?: RetrieveOptions
+) {
   return async function retrieveNode(
     state: RAGState
   ): Promise<Partial<RAGState>> {
     const startedAt = Date.now();
 
-    const chunks = await retrieveChunks(state.userId, state.question, topK);
+    const chunks = await retrieveChunks(
+      state.userId,
+      state.question,
+      topK,
+      retrieveOptions
+    );
 
     const output: Partial<RAGState> = { chunks };
 
@@ -116,8 +126,12 @@ export function createRetrieveNode(topK: number = DEFAULT_TOP_K) {
  * 拼接进 prompt，要求模型在回答中标注 [1]、[2] 引用来源。
  *
  * @param llm - 由 createDeepSeekChat 创建、已指向 DeepSeek 的模型实例
+ * @param ragAnswerPrompt - 可选：回答系统 Prompt（P3 参数收敛，缺省用内置默认值）
  */
-export function createAnswerNode(llm: ChatOpenAI) {
+export function createAnswerNode(
+  llm: ChatOpenAI,
+  ragAnswerPrompt?: string
+) {
   return async function answerNode(
     state: RAGState
   ): Promise<Partial<RAGState>> {
@@ -126,7 +140,7 @@ export function createAnswerNode(llm: ChatOpenAI) {
     const context = buildContext(state.chunks);
 
     const messages = [
-      new SystemMessage(RAG_ANSWER_SYSTEM_PROMPT),
+      new SystemMessage(ragAnswerPrompt ?? RAG_ANSWER_SYSTEM_PROMPT),
       new HumanMessage(
         `【知识库检索结果】\n${context}\n\n【用户问题】\n${state.question}\n\n请回答并标注引用来源。`
       ),

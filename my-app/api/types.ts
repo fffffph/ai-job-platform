@@ -304,3 +304,94 @@ export const ERROR_MESSAGES: Record<string, string> = {
     "需先在个人中心配置 DeepSeek API Key 才能使用 AI 简历优化",
   [ErrorCode.INVALID_KEY_FORMAT]: "API Key 格式不正确，请检查后重试",
 };
+
+// ========== 系统配置（配置中心）类型 ==========
+
+/** 配置值类型（与后端 config/schema.ts 对齐） */
+export type ConfigType =
+  | "string"
+  | "textarea"
+  | "number"
+  | "boolean"
+  | "json"
+  | "json-array"
+  | "file";
+
+/** 配置分组（与后端对齐，custom 为管理员新增的「自定义」动态配置组） */
+export type ConfigGroup =
+  | "prompt"
+  | "llm"
+  | "rag"
+  | "jobs"
+  | "switch"
+  | "custom";
+
+/** string 类型的下拉选项 */
+export interface ConfigEnumOption {
+  value: string;
+  label: string;
+}
+
+/**
+ * 单个配置项的有效状态（对应后端 GET /api/config 返回的 data 元素）。
+ *
+ * 后端「三级回退」后给出最终 value + 是否被覆盖 + 是否启用，
+ * 并透传 min/max/enum/jsonSchema 等元数据，供前端 schema 驱动渲染控件。
+ */
+export interface EffectiveConfigItem {
+  /** 唯一键，如 "prompt.resume_expert" */
+  key: string;
+  /** 值类型，决定前端控件 */
+  type: ConfigType;
+  /** 中文名 */
+  label: string;
+  /** 说明文字 */
+  description?: string;
+  /** 分组 */
+  group: ConfigGroup;
+  /** 内置默认值 */
+  defaultValue: unknown;
+  /** 是否启用（元开关） */
+  enabled: boolean;
+  /** 有效值（回退后的最终值） */
+  value: unknown;
+  /** 是否已被覆盖（DB 存在覆盖值） */
+  overridden: boolean;
+  /** number 类型：最小值 */
+  min?: number;
+  /** number 类型：最大值 */
+  max?: number;
+  /** string 类型：可选下拉选项 */
+  enum?: ConfigEnumOption[];
+  /** json / json-array 类型：结构说明 */
+  jsonSchema?: string;
+}
+
+/** 批量保存配置的单项（PUT /api/config 请求体 items 元素） */
+export interface SaveConfigItem {
+  key: string;
+  value: unknown;
+  enabled?: boolean;
+}
+
+/** 新增动态配置的请求参数（POST /api/config） */
+export interface CreateConfigParams {
+  /** 配置键（全小写、点分、见名知意，如 "feature.my_flag"，须全局唯一） */
+  key: string;
+  /** 值类型（决定前端控件与后端校验） */
+  type: ConfigType;
+  /** 配置值 */
+  value: unknown;
+  /** 中文名（见名知意展示用） */
+  label?: string;
+  /** 说明文字 */
+  description?: string;
+  /** 是否启用（默认 true） */
+  enabled?: boolean;
+}
+
+/** 当前用户角色查询结果（GET /api/user/roles） */
+export interface UserRolesResult {
+  /** 角色代码数组，如 ["admin"] / ["user"] */
+  roles: string[];
+}

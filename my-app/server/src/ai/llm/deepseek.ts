@@ -37,24 +37,45 @@ const DEEPSEEK_TEMPERATURE = 0.3;
 const DEEPSEEK_TIMEOUT_MS = 60_000;
 
 /**
+ * createDeepSeekChat 的可选参数（P3 参数收敛：由配置中心注入）。
+ *
+ * 所有字段均可选，缺省时回退到本文件顶部的内置默认值（三级回退的最终兜底）。
+ * 调用方（如 buildResumeGraph）从配置中心读取这些值后传入，实现「模型参数可配置」。
+ */
+export interface DeepSeekChatOptions {
+  /** 模型名（默认 deepseek-chat） */
+  model?: string;
+  /** 采样温度（默认 0.3） */
+  temperature?: number;
+  /** 单次最大 token（默认 4096） */
+  maxTokens?: number;
+  /** 请求超时毫秒（默认 60000） */
+  timeout?: number;
+}
+
+/**
  * 创建一个指向 DeepSeek 的 ChatOpenAI 实例。
  *
  * 每次调用都会用传入的明文 apiKey 新建实例，保证：
  * 1. Key 按用户隔离，不跨请求串用；
  * 2. 实例用完即弃，Key 不长期驻留内存。
  *
- * @param apiKey - 当前用户的 DeepSeek 明文 Key（由 getDecryptedKey 提供）
+ * @param apiKey  - 当前用户的 DeepSeek 明文 Key（由 getDecryptedKey 提供）
+ * @param options - 可选参数（模型名/温度/token/超时），缺省走内置默认值
  * @returns 配置好的 ChatOpenAI 实例（已开启 streaming）
  * @throws apiKey 为空时抛出错误（应在上游路由层拦截，这里做兜底）
  */
-export function createDeepSeekChat(apiKey: string): ChatOpenAI {
+export function createDeepSeekChat(
+  apiKey: string,
+  options?: DeepSeekChatOptions
+): ChatOpenAI {
   if (!apiKey) {
     throw new Error("未提供 DeepSeek API Key，无法创建模型实例");
   }
 
   return new ChatOpenAI({
-    // 模型名（DeepSeek 的 OpenAI 兼容模型标识）
-    model: DEEPSEEK_MODEL,
+    // 模型名（DeepSeek 的 OpenAI 兼容模型标识），配置项 llm.model 可覆盖
+    model: options?.model ?? DEEPSEEK_MODEL,
     // 用户级明文 Key，每次调用动态传入
     apiKey,
     // 覆盖 OpenAI 客户端配置，指向 DeepSeek 服务器
@@ -63,8 +84,8 @@ export function createDeepSeekChat(apiKey: string): ChatOpenAI {
     },
     // 必须开启流式，LangGraph 的 streamMode: "messages" 才能逐 token 产出
     streaming: true,
-    temperature: DEEPSEEK_TEMPERATURE,
-    maxTokens: DEEPSEEK_MAX_TOKENS,
-    timeout: DEEPSEEK_TIMEOUT_MS,
+    temperature: options?.temperature ?? DEEPSEEK_TEMPERATURE,
+    maxTokens: options?.maxTokens ?? DEEPSEEK_MAX_TOKENS,
+    timeout: options?.timeout ?? DEEPSEEK_TIMEOUT_MS,
   });
 }

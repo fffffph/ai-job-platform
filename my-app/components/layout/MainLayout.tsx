@@ -42,6 +42,7 @@
  * key='3' → /dashboard/resume   → 简历优化（qiankun 子应用 ★）
  * key='4' → /dashboard/profile  → 个人中心（主应用）
  * key='5' → /dashboard/history  → 决策历史（主应用，P6 Trace 落库后）
+ * key='6' → /dashboard/settings → 系统设置（主应用，仅管理员，P4 配置中心）
  *
  * 用户点击"简历优化"菜单时，router.push('/dashboard/resume')
  * 对应的 page.tsx 通过 dynamic import 加载 MicroAppLoader，
@@ -61,10 +62,13 @@ import {
   MoonOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
-  HistoryOutlined
+  HistoryOutlined,
+  SettingOutlined
 } from '@ant-design/icons';
 import { useRouter, usePathname } from 'next/navigation';
 import { useTheme } from 'next-themes';
+import { loadAppConfig, isAdmin, clearAppConfig } from '@/lib/app-config';
+import { removeToken } from '@/api';
 
 const { Header, Content, Sider } = Layout;
 
@@ -75,13 +79,24 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
   const [mounted, setMounted] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [admin, setAdmin] = useState(false);
 
   useEffect(() => {
     setMounted(true);
   }, []);
 
+  useEffect(() => {
+    // 登录后拉取一次应用配置/角色（window 单例），判断是否管理员，
+    // 用于控制「系统设置」菜单的显示/隐藏（菜单权限过滤）。
+    loadAppConfig().then((state) => {
+      setAdmin(isAdmin(state?.roles));
+    });
+  }, []);
+
   const handleLogout = () => {
-    router.push('/login');
+    removeToken(); // 清除登录 token（关键：否则退出后点浏览器返回又回到登录态）
+    clearAppConfig(); // 清空角色/配置缓存，防止越权残留
+    router.replace('/login'); // replace 替换历史记录，避免返回键又回到 dashboard
   };
 
   /**
@@ -116,6 +131,10 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
         // AI 决策历史（P6 Trace 落库后的历史回放入口）
         router.push('/dashboard/history');
         break;
+      case '6':
+        // 系统设置（配置中心，仅管理员可见，菜单权限过滤）
+        router.push('/dashboard/settings');
+        break;
     }
     if (isMobile) {
       setCollapsed(true);
@@ -132,6 +151,7 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
     if (pathname === '/dashboard/resume') return ['3']; // ★ 子应用路由
     if (pathname === '/dashboard/profile') return ['4'];
     if (pathname === '/dashboard/history') return ['5'];
+    if (pathname === '/dashboard/settings') return ['6'];
     return ['1'];
   };
 
@@ -187,6 +207,10 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
             },
             { key: '4', icon: <UserOutlined />, label: '个人中心' },
             { key: '5', icon: <HistoryOutlined />, label: '决策历史' },
+            // ★ 菜单权限过滤：仅管理员显示「系统设置」
+            ...(admin
+              ? [{ key: '6', icon: <SettingOutlined />, label: '系统设置' }]
+              : []),
           ]}
         />
       </Sider>

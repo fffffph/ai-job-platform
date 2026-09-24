@@ -35,11 +35,6 @@ import {
   type JobRecommendation,
 } from "../../prompts/schemas/job-recommendation.js";
 
-/** 工具注册表：工具名 → 工具实例（Agent 通过 Function Calling 按名调用） */
-const TOOL_MAP: Record<string, StructuredToolInterface> = {
-  search_jobs: searchJobsTool,
-};
-
 /**
  * 创建 Agent 决策节点（工厂函数）。
  *
@@ -49,9 +44,14 @@ const TOOL_MAP: Record<string, StructuredToolInterface> = {
  *
  * @param llm - 由 createDeepSeekChat 创建、已指向 DeepSeek 的模型实例
  */
-export function createAgentNode(llm: ChatOpenAI) {
+export function createAgentNode(
+  llm: ChatOpenAI,
+  tools?: StructuredToolInterface[]
+) {
+  // 工具列表：默认用 search_jobs 单例；图装配层可按 switch.mock_jobs 注入
+  const toolList = tools ?? [searchJobsTool];
   // 绑定工具：让 DeepSeek 支持 Function Calling（自主决定是否调 search_jobs）
-  const llmWithTools = llm.bindTools(Object.values(TOOL_MAP));
+  const llmWithTools = llm.bindTools(toolList);
 
   return async function agentNode(
     state: JobsState
@@ -86,59 +86,68 @@ export function createAgentNode(llm: ChatOpenAI) {
 }
 
 /**
- * 工具执行节点。
+ * 创建工具执行节点（工厂函数）。
  *
  * 读取消息流中最后一条 AIMessage 的 tool_calls，逐个执行对应工具，
  * 把执行结果封装成 ToolMessage 追加回消息流，供 agent 节点下一轮决策。
  *
- * 注意：本节点是无状态的纯分发逻辑，不依赖全局变量，工具按注册表查找。
+ * 注意：本节点通过闭包注入工具映射，保持无全局状态、纯分发逻辑。
+ * 图装配层按 switch.mock_jobs 开关选择数据源后传入对应的 toolMap。
+ *
+ * @param toolMap - 工具名 → 工具实例 的映射（如 { search_jobs: searchJobsTool }）
  */
-export async function toolsNode(state: JobsState): Promise<Partial<JobsState>> {
-  const startedAt = Date.now();
+export function createToolsNode(
+  toolMap: Record<string, StructuredToolInterface>
+) {
+  return async function toolsNode(
+    state: JobsState
+  ): Promise<Partial<JobsState>> {
+    const startedAt = Date.now();
 
-  const lastMessage = state.messages[state.messages.length - 1];
-  const toolCalls =
-    lastMessage instanceof AIMessage ? (lastMessage.tool_calls ?? []) : [];
+    const lastMessage = state.messages[state.messages.length - 1];
+    const toolCalls =
+      lastMessage instanceof AIMessage ? (lastMessage.tool_calls ?? []) : [];
 
-  const toolMessages: ToolMessage[] = [];
-  const executed: string[] = [];
+    const toolMessages: ToolMessage[] = [];
+    const executed: string[] = [];
 
-  for (const call of toolCalls) {
-    const toolInstance = TOOL_MAP[call.name];
-    let content: string;
+    for (const call of toolCalls) {
+      const toolInstance = toolMap[call.name];
+      let content: string;
 
-    if (toolInstance) {
-      try {
-        // 执行工具（args 已由 Function Calling 校验过 schema）
-        const result = await toolInstance.invoke(call.args);
-        content =
-          typeof result === "string" ? result : JSON.stringify(result);
-        executed.push(call.name);
-      } catch (error) {
-        content = `工具 ${call.name} 执行失败：${(error as Error).message}`;
+      if (toolInstance) {
+        try {
+          // 执行工具（args 已由 Function Calling 校验过 schema）
+          const result = await toolInstance.invoke(call.args);
+          content =
+            typeof result === "string" ? result : JSON.stringify(result);
+          executed.push(call.name);
+        } catch (error) {
+          content = `工具 ${call.name} 执行失败：${(error as Error).message}`;
+        }
+      } else {
+        content = `错误：未知工具 ${call.name}`;
       }
-    } else {
-      content = `错误：未知工具 ${call.name}`;
+
+      toolMessages.push(
+        new ToolMessage({
+          content,
+          tool_call_id: call.id ?? "",
+          name: call.name,
+        })
+      );
     }
 
-    toolMessages.push(
-      new ToolMessage({
-        content,
-        tool_call_id: call.id ?? "",
-        name: call.name,
-      })
-    );
-  }
+    collectTrace({
+      nodeName: "tools",
+      input: { toolCalls: executed },
+      output: { resultCount: toolMessages.length },
+      durationMs: Date.now() - startedAt,
+      timestamp: new Date().toISOString(),
+    });
 
-  collectTrace({
-    nodeName: "tools",
-    input: { toolCalls: executed },
-    output: { resultCount: toolMessages.length },
-    durationMs: Date.now() - startedAt,
-    timestamp: new Date().toISOString(),
-  });
-
-  return { messages: toolMessages };
+    return { messages: toolMessages };
+  };
 }
 
 // ============================================================
@@ -152,15 +161,28 @@ export interface FinalizeProfile {
   expectedSalary: string;
 }
 
-/** finalize 节点系统 Prompt：要求从候选职位中选出最匹配的并生成结构化推荐 */
-const FINALIZE_SYSTEM_PROMPT = `你是资深求职顾问。请从「候选职位列表」中，根据「用户求职意向」选出最匹配的职位（最多 8 条），按匹配度从高到低排序，并为每条生成推荐原因和自动招呼语。
+/**
+ * 生成 finalize 节点的系统 Prompt（含可调策略数字）。
+ *
+ * 原 Prompt 里写死的「最多 8 条」「40 字以内」拆成独立配置项，
+ * 由配置中心注入后模板化生成。缺省走内置默认值（向后兼容）。
+ *
+ * @param maxRecommend   - 推荐条数上限（默认 8，配置项 jobs.max_recommend）
+ * @param greetingMaxLen - 招呼语字数上限（默认 40，配置项 jobs.greeting_max_len）
+ */
+function buildFinalizePrompt(
+  maxRecommend: number = 8,
+  greetingMaxLen: number = 40
+): string {
+  return `你是资深求职顾问。请从「候选职位列表」中，根据「用户求职意向」选出最匹配的职位（最多 ${maxRecommend} 条），按匹配度从高到低排序，并为每条生成推荐原因和自动招呼语。
 
 要求：
 1. reason：一句话说明为什么适合（技能匹配/城市符合/薪资达标等），客观具体；
-2. greeting：礼貌的自动招呼语，突出求职者优势，可直接用于 BOSS直聘「立即沟通」，控制在 40 字以内；
+2. greeting：礼貌的自动招呼语，突出求职者优势，可直接用于 BOSS直聘「立即沟通」，控制在 ${greetingMaxLen} 字以内；
 3. url：必须使用候选职位数据中自带的 url 字段（BOSS直达链接），不要自行编造或修改；
 4. summary：一句话总结本次推荐的整体情况；
 5. 全程简体中文。`;
+}
 
 /**
  * 从 ReAct 循环的消息流中提取所有搜索到的职位（按 id 去重）。
@@ -222,15 +244,23 @@ function buildFinalizeMessage(
  *
  * @param llm     - 由 createDeepSeekChat 创建、已指向 DeepSeek 的模型实例
  * @param profile - 用户求职画像（期望城市/技能/薪资）
+ * @param options - 可选：推荐条数上限 / 招呼语字数上限（P3 参数收敛，缺省走默认值）
  */
 export function createFinalizeNode(
   llm: ChatOpenAI,
-  profile: FinalizeProfile
+  profile: FinalizeProfile,
+  options?: { maxRecommend?: number; greetingMaxLen?: number }
 ) {
   // DeepSeek 结构化输出必须用 functionCalling（不支持 response_format）
   const structuredLlm = llm.withStructuredOutput(JobRecommendationSchema, {
     method: "functionCalling",
   });
+
+  // 工厂阶段就生成最终 Prompt（闭包捕获），避免每次节点执行重复拼接
+  const finalizePrompt = buildFinalizePrompt(
+    options?.maxRecommend,
+    options?.greetingMaxLen
+  );
 
   return async function finalizeNode(
     state: JobsState
@@ -258,7 +288,7 @@ export function createFinalizeNode(
 
     // 3. 结构化生成推荐
     const messages = [
-      new SystemMessage(FINALIZE_SYSTEM_PROMPT),
+      new SystemMessage(finalizePrompt),
       new HumanMessage(buildFinalizeMessage(jobs, profile)),
     ];
 

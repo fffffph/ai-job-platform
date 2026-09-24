@@ -190,7 +190,7 @@ const ProfilePage = () => {
   const handleLogout = () => {
     removeToken();
     msg.success("已退出登录");
-    router.push("/login");
+    router.replace("/login"); // replace 替换历史，避免返回键又回到 dashboard
   };
 
   // ---------- 渲染 ----------

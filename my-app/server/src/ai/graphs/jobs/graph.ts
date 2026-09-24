@@ -32,26 +32,60 @@ import { createDeepSeekChat } from "../../llm/deepseek.js";
 import { JobsStateAnnotation, type JobsState } from "./state.js";
 import {
   createAgentNode,
-  toolsNode,
+  createToolsNode,
   createFinalizeNode,
   type FinalizeProfile,
 } from "./nodes.js";
+import { createSearchJobsTool } from "../../tools/function-calling/search-jobs.js";
 
 /** 条件路由返回的目标（"tools" 继续循环，或 "finalize" 进入结构化推荐） */
 type RouteAfterAgent = "tools" | "finalize";
 
 /**
+ * buildJobsGraph 的可选参数（P3 参数收敛：由配置中心注入）。
+ *
+ * 所有字段均可选，缺省时回退到各模块内置默认值。
+ */
+export interface JobsGraphOptions {
+  // —— 模型参数 ——
+  /** 对话模型名（默认 deepseek-chat，配置项 llm.model） */
+  model?: string;
+  /** 采样温度（默认 0.3，配置项 llm.temperature） */
+  temperature?: number;
+  /** 单次最大 token（默认 4096，配置项 llm.max_tokens） */
+  maxTokens?: number;
+  /** 请求超时毫秒（默认 60000，配置项 llm.timeout_ms） */
+  timeout?: number;
+  // —— 职位推荐参数 ——
+  /** 推荐条数上限（默认 8，配置项 jobs.max_recommend） */
+  maxRecommend?: number;
+  /** 招呼语字数上限（默认 40，配置项 jobs.greeting_max_len） */
+  greetingMaxLen?: number;
+  /** ReAct 最大迭代轮数（默认 6） */
+  maxIterations?: number;
+  /** 是否使用模拟职位数据（默认 true，配置项 switch.mock_jobs） */
+  useMockJobs?: boolean;
+  /** 用户求职画像（供 finalize 节点个性化推荐） */
+  profile?: FinalizeProfile;
+}
+
+/**
  * 构建并编译职位发现图。
  *
  * @param apiKey  - 当前用户的 DeepSeek 明文 Key（由路由层解密获取）
- * @param options - 可选配置（maxIterations 最大迭代轮数、profile 用户求职画像）
+ * @param options - 可选配置（模型/推荐参数/最大迭代/画像），缺省走内置默认值
  * @returns 编译后的图，可调用 .stream(state, { streamMode: "updates" }) 执行
  */
 export function buildJobsGraph(
   apiKey: string,
-  options?: { maxIterations?: number; profile?: FinalizeProfile }
+  options?: JobsGraphOptions
 ) {
-  const llm = createDeepSeekChat(apiKey);
+  const llm = createDeepSeekChat(apiKey, {
+    model: options?.model,
+    temperature: options?.temperature,
+    maxTokens: options?.maxTokens,
+    timeout: options?.timeout,
+  });
   const maxIterations = options?.maxIterations ?? 6;
   const profile: FinalizeProfile = options?.profile ?? {
     city: "",
@@ -59,9 +93,19 @@ export function buildJobsGraph(
     expectedSalary: "",
   };
 
-  // 注入模型实例到 agent 节点与 finalize 节点（闭包）
-  const agentNode = createAgentNode(llm);
-  const finalizeNode = createFinalizeNode(llm, profile);
+  // 【P5 开关】按 switch.mock_jobs 选择数据源，构建 search_jobs 工具
+  const useMockJobs = options?.useMockJobs ?? true;
+  const searchTool = createSearchJobsTool(useMockJobs);
+  const toolMap = { search_jobs: searchTool };
+
+  // 注入模型实例到 agent 节点与 finalize 节点（闭包），
+  // finalize 节点的推荐条数/招呼语字数由配置中心注入
+  const agentNode = createAgentNode(llm, [searchTool]);
+  const toolsNode = createToolsNode(toolMap);
+  const finalizeNode = createFinalizeNode(llm, profile, {
+    maxRecommend: options?.maxRecommend,
+    greetingMaxLen: options?.greetingMaxLen,
+  });
 
   /**
    * agent 节点之后的条件路由函数。

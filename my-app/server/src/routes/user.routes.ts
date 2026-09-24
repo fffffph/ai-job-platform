@@ -36,6 +36,13 @@ userRouter.put("/profile", authMiddleware, userController.updateProfile);
 userRouter.put("/password", authMiddleware, userController.changePassword);
 
 // ============================================================
+// 角色查询路由（需认证，供前端判断权限/过滤菜单）
+// ============================================================
+
+// 获取当前用户角色代码列表（如 ["admin"] / ["user"]）
+userRouter.get("/roles", authMiddleware, userController.getRoles);
+
+// ============================================================
 // DeepSeek API Key 管理路由（需认证，按用户隔离）
 // ============================================================
 

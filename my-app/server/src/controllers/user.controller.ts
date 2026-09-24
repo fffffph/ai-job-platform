@@ -176,6 +176,45 @@ export async function changePassword(
 }
 
 // ============================================================
+// 获取当前用户角色（RBAC）
+// ============================================================
+
+/**
+ * GET /api/user/roles
+ *
+ * 返回当前登录用户的角色代码列表（如 ["admin"] / ["user"]）。
+ * 前端登录后调用，据此判断是否管理员、控制菜单显示。
+ */
+export async function getRoles(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const userId = (req as any).user?.id;
+
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        message: "未登录",
+        code: "UNAUTHORIZED",
+      });
+      return;
+    }
+
+    const roles = await userService.getUserRoles(userId);
+
+    res.status(200).json({
+      success: true,
+      message: "获取成功",
+      data: { roles },
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// ============================================================
 // DeepSeek API Key 管理
 // ============================================================
 

@@ -24,6 +24,7 @@ import type {
   DeepSeekKeyTestResult,
   SiliconFlowKeyStatus,
   SiliconFlowKeyTestResult,
+  UserRolesResult,
 } from "../types";
 
 // ============================================================
@@ -278,6 +279,31 @@ export async function testSiliconFlowKey(
     return {
       success: false,
       message: error?.message || "测试失败，请稍后重试",
+      code: error?.code,
+    };
+  }
+}
+
+// ============================================================
+// 角色查询（RBAC）
+// ============================================================
+
+/**
+ * 获取当前用户角色代码列表（如 ["admin"] / ["user"]）。
+ *
+ * GET /api/user/roles（需 JWT 认证）
+ *
+ * 前端登录后调用一次，据此判断是否管理员、控制「系统设置」等管理入口显示。
+ *
+ * @returns { roles: string[] }（角色代码数组）
+ */
+export async function getMyRoles(): Promise<ApiResponse<UserRolesResult>> {
+  try {
+    return await client.get("/api/user/roles");
+  } catch (error: any) {
+    return {
+      success: false,
+      message: error?.message || "读取用户角色失败",
       code: error?.code,
     };
   }

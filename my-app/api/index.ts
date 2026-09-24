@@ -21,6 +21,7 @@ export {
   saveSiliconFlowKey,
   deleteSiliconFlowKey,
   testSiliconFlowKey,
+  getMyRoles,
 } from "./modules/user";
 
 // 个人知识库模块（RAG）
@@ -54,6 +55,16 @@ export { getJobProfileApi, saveJobProfileApi } from "./modules/jobs";
 // AI Trace 历史模块（P6 落库后新增）
 export { listTraceRunsApi, getTraceRunApi } from "./modules/trace";
 
+// 系统配置模块（配置中心 P2/P4）
+export {
+  getConfigsApi,
+  createConfigApi,
+  saveConfigsApi,
+  saveConfigOneApi,
+  resetConfigOneApi,
+  resetAllConfigsApi,
+} from "./modules/config";
+
 // Token 工具函数
 export { getToken, setToken, removeToken } from "./client";
 
@@ -84,6 +95,13 @@ export type {
   TraceEvent,
   TraceRunListItem,
   TraceRunDetail,
+  ConfigType,
+  ConfigGroup,
+  ConfigEnumOption,
+  EffectiveConfigItem,
+  SaveConfigItem,
+  CreateConfigParams,
+  UserRolesResult,
 } from "./types";
 
 // 枚举和常量导出

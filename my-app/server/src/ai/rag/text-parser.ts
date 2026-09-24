@@ -21,7 +21,7 @@
 import { z } from "zod";
 import { SystemMessage, HumanMessage } from "@langchain/core/messages";
 import type { KnowledgeEntry } from "./ingestion/excel-parser.js";
-import { createDeepSeekChat } from "../llm/deepseek.js";
+import { createDeepSeekChat, type DeepSeekChatOptions } from "../llm/deepseek.js";
 
 // ============================================================
 // LLM 兜底的结构化输出 Schema
@@ -134,24 +134,50 @@ export function parseTextToEntries(text: string): KnowledgeEntry[] {
 // ============================================================
 
 /**
+ * parseTextWithLLM 的可选参数（P3 参数收敛：由配置中心注入）。
+ *
+ * 所有字段均可选，缺省时回退到内置默认值。
+ */
+export interface ParseTextLLMOptions {
+  /** 解析系统 Prompt（默认 PARSE_TEXT_SYSTEM_PROMPT，配置项 prompt.parse_text） */
+  prompt?: string;
+  /** 对话模型名（默认 deepseek-chat，配置项 llm.model） */
+  model?: string;
+  /** 采样温度（默认 0.3，配置项 llm.temperature） */
+  temperature?: number;
+  /** 单次最大 token（默认 4096，配置项 llm.max_tokens） */
+  maxTokens?: number;
+  /** 请求超时毫秒（默认 60000，配置项 llm.timeout_ms） */
+  timeout?: number;
+}
+
+/**
  * LLM 兜底解析：用 DeepSeek 结构化输出把自由文本解析成条目。
  *
- * @param text   - 用户粘贴的文本
- * @param apiKey - 用户级 DeepSeek Key（明文）
+ * @param text    - 用户粘贴的文本
+ * @param apiKey  - 用户级 DeepSeek Key（明文）
+ * @param options - 可选参数（Prompt/模型/温度等），缺省走内置默认值
  * @returns 解析出的条目数组
  */
 export async function parseTextWithLLM(
   text: string,
-  apiKey: string
+  apiKey: string,
+  options?: ParseTextLLMOptions
 ): Promise<KnowledgeEntry[]> {
-  const llm = createDeepSeekChat(apiKey);
+  const llmOptions: DeepSeekChatOptions = {
+    model: options?.model,
+    temperature: options?.temperature,
+    maxTokens: options?.maxTokens,
+    timeout: options?.timeout,
+  };
+  const llm = createDeepSeekChat(apiKey, llmOptions);
   // DeepSeek 结构化输出必须用 functionCalling（不支持 response_format）
   const structuredLlm = llm.withStructuredOutput(ParseTextSchema, {
     method: "functionCalling",
   });
 
   const result = (await structuredLlm.invoke([
-    new SystemMessage(PARSE_TEXT_SYSTEM_PROMPT),
+    new SystemMessage(options?.prompt ?? PARSE_TEXT_SYSTEM_PROMPT),
     new HumanMessage(text),
   ])) as { entries: z.infer<typeof ParseTextSchema>["entries"] };
 

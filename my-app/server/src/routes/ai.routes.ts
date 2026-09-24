@@ -57,7 +57,6 @@ import {
   buildRagGraph,
   // 【P4 新增】职位发现 Agent 相关能力
   buildJobsGraph,
-  JOB_AGENT_SYSTEM_PROMPT,
   // 【P5 新增】用户求职画像（Memory 层）
   getJobProfile,
   saveJobProfile,
@@ -96,6 +95,16 @@ import type {
   // 【P6 新增】trace 事件类型（落库辅助函数签名用）
   TraceEvent,
 } from "../ai/index.js";
+// 【P3 参数收敛】配置装配层：从配置中心读取并组装各 AI 图的 options
+import {
+  loadResumeGraphOptions,
+  loadRagGraphOptions,
+  loadJobsGraphOptions,
+  loadRagIngestOptions,
+  loadParseTextOptions,
+} from "../config/ai-config.js";
+// 【P5 开关】直接读取功能开关（文本解析 LLM 兜底开关）
+import { getConfig } from "../config/config-service.js";
 
 /** 路由实例 */
 const aiRouter: IRouter = Router();
@@ -278,8 +287,9 @@ async function analyzeResume(req: Request, res: Response): Promise<void> {
   try {
     // 【P6】用 runWithTrace 包裹整段图执行：ALS 隔离收集节点级 trace 事件
     const { result, events } = await runWithTrace(runId, async () => {
-      // 根据当前用户 Key 构建图（按请求构建，保证 Key 隔离）
-      const graph = buildResumeGraph(apiKey);
+      // 根据当前用户 Key 构建图（按请求构建，保证 Key 隔离），
+      // 模型参数与 Prompt 由配置中心注入（P3 参数收敛）
+      const graph = buildResumeGraph(apiKey, await loadResumeGraphOptions());
 
       const initialState: ResumeState = {
         resumeText: text,
@@ -414,7 +424,15 @@ async function uploadKnowledge(req: Request, res: Response): Promise<void> {
 
   // ---------- 入库（分块 + 向量化 + 写 pgvector） ----------
   try {
-    const result = await ingestDocument(userId, title, content);
+    // 分块大小/重叠/Embedding 超时由配置中心注入（P3 参数收敛）
+    const result = await ingestDocument(
+      userId,
+      title,
+      content,
+      undefined,
+      undefined,
+      await loadRagIngestOptions()
+    );
     // 【修复】统一包装进 data 字段，与 ApiResponse<UploadResult> 类型约定一致
     res.json({
       success: true,
@@ -626,7 +644,13 @@ async function importKnowledge(req: Request, res: Response): Promise<void> {
 
   // ---------- 4. 批量入库 + 保存原始文件 ----------
   try {
-    const result = await ingestEntries(userId, parseResult.entries, mode);
+    // 分块大小/重叠/Embedding 超时由配置中心注入（P3 参数收敛）
+    const result = await ingestEntries(
+      userId,
+      parseResult.entries,
+      mode,
+      await loadRagIngestOptions()
+    );
     await saveKnowledgeFile(userId, filename, file.buffer);
 
     res.json({
@@ -759,8 +783,17 @@ async function parseTextKnowledge(req: Request, res: Response): Promise<void> {
   // ---------- 1. 规则解析（免费） ----------
   let entries = parseTextToEntries(text);
 
+  // 【P5 开关】读取「文本解析 LLM 兜底」开关：关闭时即使前端勾选 AI 解析，
+  // 也强制跳过 LLM 兜底（省 token），只走规则解析。
+  let llmParseEnabled = true;
+  try {
+    llmParseEnabled = await getConfig<boolean>("switch.llm_parse");
+  } catch (error) {
+    console.warn("[AI] 读取文本解析 LLM 兜底开关失败:", (error as Error).message);
+  }
+
   // ---------- 2. 规则解析无结果且允许 LLM → 兜底 ----------
-  if (entries.length === 0 && useLLM) {
+  if (entries.length === 0 && useLLM && llmParseEnabled) {
     let apiKey = "";
     try {
       apiKey = await getDecryptedKey(userId);
@@ -783,7 +816,8 @@ async function parseTextKnowledge(req: Request, res: Response): Promise<void> {
     }
 
     try {
-      entries = await parseTextWithLLM(text, apiKey);
+      // 解析 Prompt 与模型参数由配置中心注入（P3 参数收敛）
+      entries = await parseTextWithLLM(text, apiKey, await loadParseTextOptions());
     } catch (error) {
       const message = (error as Error).message || "AI 解析失败";
       console.error("[AI] 文本 AI 解析失败:", message);
@@ -796,12 +830,14 @@ async function parseTextKnowledge(req: Request, res: Response): Promise<void> {
     }
   }
 
-  // ---------- 3. 仍无结果 → 提示可开启 AI 解析 ----------
+  // ---------- 3. 仍无结果 → 提示可开启 AI 解析（开关关闭时提示系统已禁用） ----------
   if (entries.length === 0) {
     res.json({
       success: true,
-      message: "未识别到结构化条目，可尝试勾选「AI 智能解析」",
-      data: { entries: [], needLLM: true },
+      message: llmParseEnabled
+        ? "未识别到结构化条目，可尝试勾选「AI 智能解析」"
+        : "未识别到结构化条目，且系统已关闭「AI 智能解析」",
+      data: { entries: [], needLLM: llmParseEnabled },
     });
     return;
   }
@@ -865,7 +901,13 @@ async function batchImportKnowledge(
   }
 
   try {
-    const result = await ingestEntries(userId, entries, mode);
+    // 分块大小/重叠/Embedding 超时由配置中心注入（P3 参数收敛）
+    const result = await ingestEntries(
+      userId,
+      entries,
+      mode,
+      await loadRagIngestOptions()
+    );
     res.json({
       success: true,
       message: mode === "replace" ? "同步替换成功" : "追加入库成功",
@@ -954,8 +996,9 @@ async function askKnowledge(req: Request, res: Response): Promise<void> {
   try {
     // 【P6】用 runWithTrace 包裹整段图执行：ALS 隔离收集节点级 trace 事件
     const { result, events } = await runWithTrace(runId, async () => {
-      // 根据当前用户 Key 构建 RAG 图（按请求构建，保证 Key 隔离）
-      const graph = buildRagGraph(apiKey);
+      // 根据当前用户 Key 构建 RAG 图（按请求构建，保证 Key 隔离），
+      // 模型/检索参数/Prompt 由配置中心注入（P3 参数收敛）
+      const graph = buildRagGraph(apiKey, await loadRagGraphOptions());
 
       const initialState: RAGState = {
         question,
@@ -1113,6 +1156,10 @@ async function recommendJobs(req: Request, res: Response): Promise<void> {
   try {
     // 【P6】用 runWithTrace 包裹整段图执行：ALS 隔离收集节点级 trace 事件
     const { result, events } = await runWithTrace(runId, async () => {
+      // 【P3 参数收敛】读取职位发现配置：模型/推荐参数 + 模板化 Agent 人设 Prompt
+      const { graph: jobsGraphOptions, jobAgentPrompt } =
+        await loadJobsGraphOptions();
+
       // 组装求职意向描述（作为 HumanMessage 注入 Agent 上下文）
       const intentParts: string[] = [];
       if (skills) intentParts.push(`技能栈：${skills}`);
@@ -1123,10 +1170,10 @@ async function recommendJobs(req: Request, res: Response): Promise<void> {
           ? `我的求职意向如下：\n${intentParts.join("\n")}\n\n请帮我搜索并推荐匹配的职位。`
           : "请帮我搜索并推荐合适的前端开发职位。";
 
-      // 初始消息流：系统 Prompt + 用户求职意向
+      // 初始消息流：系统 Prompt（模板化）+ 用户求职意向
       const initialState: JobsState = {
         messages: [
-          new SystemMessage(JOB_AGENT_SYSTEM_PROMPT),
+          new SystemMessage(jobAgentPrompt),
           new HumanMessage(intent),
         ],
         recommendations: null,
@@ -1136,8 +1183,9 @@ async function recommendJobs(req: Request, res: Response): Promise<void> {
       sse.send("meta", { type: "start", message: "开始职位发现" });
 
       // 根据当前用户 Key 构建 ReAct 图（按请求构建，保证 Key 隔离），
-      // 传入用户画像供 finalize 节点做个性化结构化推荐
+      // 传入用户画像供 finalize 节点做个性化结构化推荐，模型/推荐参数由配置注入
       const graph = buildJobsGraph(apiKey, {
+        ...jobsGraphOptions,
         profile: { city, skills, expectedSalary },
       });
 

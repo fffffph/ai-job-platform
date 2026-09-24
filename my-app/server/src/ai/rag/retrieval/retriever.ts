@@ -33,6 +33,22 @@ const CANDIDATE_MULTIPLIER = 3;
 /** 单个检索词命中的加权分 */
 const KEYWORD_BOOST = 0.15;
 
+/**
+ * retrieveChunks 的可选参数（P3 参数收敛：由配置中心注入）。
+ *
+ * 所有字段均可选，缺省时回退到本文件顶部的内置默认值。
+ */
+export interface RetrieveOptions {
+  /** 候选召回倍数（默认 3，配置项 rag.candidate_multiplier） */
+  candidateMultiplier?: number;
+  /** 单个检索词命中的加权分（默认 0.15，配置项 rag.keyword_boost） */
+  keywordBoost?: number;
+  /** 向量化接口超时毫秒（默认 60000，配置项 rag.embedding_timeout_ms） */
+  embeddingTimeoutMs?: number;
+  /** 是否启用混合检索（默认 true，配置项 switch.hybrid_search）。false 时退化为纯向量检索，跳过关键词融合 */
+  hybrid?: boolean;
+}
+
 /** 单条检索结果 */
 export interface RetrievedChunk {
   /** 来源文档 ID（用于关键词命中融合） */
@@ -62,12 +78,14 @@ interface RetrievedRow {
  * @param userId - 当前用户 ID
  * @param query - 用户问题
  * @param topK - 返回条数，默认 5，内部钳制到 [1, 20]
+ * @param options - 可选参数（候选召回倍数/检索词加权/超时），缺省走内置默认值
  * @returns 按融合分数降序排列的分块数组
  */
 export async function retrieveChunks(
   userId: string,
   query: string,
-  topK: number = DEFAULT_TOP_K
+  topK: number = DEFAULT_TOP_K,
+  options?: RetrieveOptions
 ): Promise<RetrievedChunk[]> {
   const trimmedQuery = query.trim();
   if (!userId) {
@@ -82,13 +100,23 @@ export async function retrieveChunks(
     ? Math.max(1, Math.min(20, Math.floor(topK)))
     : DEFAULT_TOP_K;
 
+  // 参数收敛：候选召回倍数与检索词加权从配置中心注入，缺省走默认值
+  const candidateMultiplier = options?.candidateMultiplier ?? CANDIDATE_MULTIPLIER;
+  const keywordBoost = options?.keywordBoost ?? KEYWORD_BOOST;
+  // 【P5 开关】混合检索开关：false 时退化为纯向量检索（跳过关键词融合 + 候选放大）
+  const hybrid = options?.hybrid ?? true;
+
   // ---------- 1. 向量化查询 ----------
   const siliconflowKey = await getDecryptedSiliconflowKey(userId);
-  const queryEmbedding = await embedText(trimmedQuery, siliconflowKey);
+  const queryEmbedding = await embedText(trimmedQuery, siliconflowKey, {
+    timeoutMs: options?.embeddingTimeoutMs,
+  });
   const vectorLiteral = `[${queryEmbedding.join(",")}]`;
 
-  // ---------- 2. 向量检索召回候选（Top-K×3） ----------
-  const candidateLimit = Math.min(20, limit * CANDIDATE_MULTIPLIER);
+  // ---------- 2. 向量检索召回候选 ----------
+  // 混合检索：先召回 Top-K×N 候选再融合重排（避免关键词命中文档被向量检索漏掉）；
+  // 纯向量检索：无需候选放大，直接召回 Top-K。
+  const candidateLimit = hybrid ? Math.min(20, limit * candidateMultiplier) : limit;
   const rows = await prisma.$queryRaw<RetrievedRow[]>`
     SELECT
       d.id AS "documentId",
@@ -107,7 +135,22 @@ export async function retrieveChunks(
     return [];
   }
 
-  // ---------- 3. 关键词命中统计（检索词融合） ----------
+  // ---------- 3/4. 融合打分 + 重排 + Top-K ----------
+  // 纯向量检索：直接按向量分数排序，跳过关键词命中统计（省一次查库）
+  if (!hybrid) {
+    return rows
+      .map((row) => ({
+        documentId: row.documentId,
+        content: row.content,
+        documentTitle: row.documentTitle,
+        chunkIndex: Number(row.chunkIndex),
+        score: Number(Number(row.score).toFixed(4)),
+      }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit);
+  }
+
+  // 混合检索：关键词命中统计（检索词融合）
   const docs = await prisma.document.findMany({
     where: { userId },
     select: { id: true, keywords: true },
@@ -117,14 +160,14 @@ export async function retrieveChunks(
     hitCount[doc.id] = keywordHitCount(trimmedQuery, doc.keywords ?? undefined);
   }
 
-  // ---------- 4. 融合打分 + 重排 + Top-K ----------
+  // 融合打分：向量相似度 + 检索词加权 × 命中数，再重排取 Top-K
   const merged = rows
     .map((row) => ({
       documentId: row.documentId,
       content: row.content,
       documentTitle: row.documentTitle,
       chunkIndex: Number(row.chunkIndex),
-      score: Number(row.score) + KEYWORD_BOOST * (hitCount[row.documentId] || 0),
+      score: Number(row.score) + keywordBoost * (hitCount[row.documentId] || 0),
     }))
     .sort((a, b) => b.score - a.score)
     .slice(0, limit);

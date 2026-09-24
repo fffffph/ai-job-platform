@@ -84,6 +84,9 @@ model User {
   // 【P5 新增】用户求职画像（1:1，用于职位推荐的个性化记忆）
   profile UserProfile?
 
+  // 【P1 角色地基】用户-角色多对多关联（用于权限控制与菜单过滤）
+  userRoles UserRole[]
+
   @@map("users")
 }
 
@@ -219,4 +222,98 @@ model TraceEvent {
 
   @@index([runId])
   @@map("trace_events")
+}
+
+// 【P1 新增】============================================
+// Role 模型 —— 角色表（RBAC 权限地基）
+// ============================================
+/**
+ * 角色实体 —— 独立表，便于后期自由扩展角色与权限。
+ *
+ * 【设计说明】
+ * - code 为唯一标识（admin / user / ...），业务代码用 code 判断权限，
+ *   中文名 name 只用于前端展示，避免文案硬编码在逻辑里。
+ * - 当前阶段预置 admin（管理员）、user（普通用户）两个角色；
+ *   后期可在此表自由增删角色、并在 user_roles 里给用户绑定。
+ *
+ * 【字段说明】
+ * - code        : 角色唯一标识，如 "admin" / "user"
+ * - name        : 中文名，如 "管理员" / "普通用户"
+ * - description : 角色说明（可选）
+ */
+model Role {
+  id          String     @id @default(uuid()) @map("id")
+  code        String     @unique @map("code")
+  name        String     @map("name")
+  description String?    @map("description")
+  createdAt   DateTime   @default(now()) @map("created_at")
+
+  users       UserRole[]
+
+  @@map("roles")
+}
+
+// 【P1 新增】============================================
+// UserRole 模型 —— 用户-角色关联表（多对多）
+// ============================================
+/**
+ * 用户与角色的多对多关联表。
+ *
+ * 【为什么用多对多而非 User 上加单字段？】
+ * 用户明确「后期要给不同用户绑定不同角色、控制菜单与权限」，
+ * 多对多（一个用户可绑多个角色）是扩展性最稳的形态：
+ * - 一个用户可同时具备多个角色（如既是普通用户又是审核员）
+ * - 后期加「角色管理页」只需操作此关联表，不改 User 结构
+ *
+ * 【字段说明】
+ * - userId / roleId : 复合主键 @@id([userId, roleId])，天然去重
+ * - onDelete: Cascade —— 用户或角色删除时，关联记录自动清理
+ */
+model UserRole {
+  userId String @map("user_id")
+  roleId String @map("role_id")
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@map("user_roles")
+}
+
+// 【P2 新增】============================================
+// SystemConfig 模型 —— 系统配置表（只存「覆盖值」）
+// ============================================
+/**
+ * 系统级可配置项（全局共享，非用户级）。
+ *
+ * 【核心设计：覆盖值模型】
+ * - 本表只存「被管理员覆盖过的值」，未覆盖的配置项不在本表出现；
+ * - 配置项的「默认值 + 类型 + 元数据」统一登记在代码里的 CONFIG_SCHEMA
+ *   注册表（config/schema.ts），本表仅负责「覆盖 + 持久化」。
+ * - 读取时三级回退：本表 value → 环境变量（部分项）→ 注册表默认值。
+ *
+ * 【为什么用 key-value（EAV）而非结构化字段？】
+ * 配置项会持续增加，key-value 加项不改表结构；类型约束由注册表承担。
+ *
+ * 【字段说明】
+ * - key     : 配置键，对应注册表的 key，如 "prompt.resume_expert"
+ * - value   : 覆盖值（Json，类型由注册表约束）。string/number/boolean/json/json-array
+ *             都存 Json；file 类型预留，value 存 fileId（当前无实际 file 项）
+ * - enabled : 是否启用该覆盖值。false 时读取回退默认值（临时禁用覆盖，
+ *             但保留 value，方便随时重新启用，无需重新填值）
+ * - updatedAt / updatedBy : 审计字段（最后修改时间 / 修改人 userId）
+ */
+model SystemConfig {
+  key       String   @id @map("key")
+  value     Json?    @map("value")
+  /// 配置值类型（string/textarea/number/boolean/json/json-array/file）。
+  /// 注册表项的类型由 CONFIG_SCHEMA 承担，此字段主要供「动态配置」（自定义 key）使用。
+  type      String   @default("string") @map("type")
+  /// 中文名（动态配置「见名知意」展示用；注册表项用注册表 label，此字段可空）
+  label     String?  @map("label")
+  enabled   Boolean  @default(true) @map("enabled")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  updatedBy String?  @map("updated_by")
+
+  @@map("system_configs")
 }
