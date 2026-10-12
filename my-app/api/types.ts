@@ -129,6 +129,10 @@ export enum ErrorCode {
   DEEPSEEK_KEY_NOT_CONFIGURED = "DEEPSEEK_KEY_NOT_CONFIGURED",
   /** DeepSeek API Key 格式不正确 */
   INVALID_KEY_FORMAT = "INVALID_KEY_FORMAT",
+  /** 账号已被停用（P0-11，登录/请求被拒） */
+  USER_DISABLED = "USER_DISABLED",
+  /** 权限不足（403，无权限执行此操作） */
+  FORBIDDEN = "FORBIDDEN",
 }
 
 // ========== 个人知识库（RAG）类型 ==========
@@ -318,6 +322,8 @@ export const ERROR_MESSAGES: Record<string, string> = {
   [ErrorCode.DEEPSEEK_KEY_NOT_CONFIGURED]:
     "需先在个人中心配置 DeepSeek API Key 才能使用 AI 简历优化",
   [ErrorCode.INVALID_KEY_FORMAT]: "API Key 格式不正确，请检查后重试",
+  [ErrorCode.USER_DISABLED]: "账号已被停用，请联系管理员",
+  [ErrorCode.FORBIDDEN]: "无权限执行此操作",
 };
 
 // ========== 系统配置（配置中心）类型 ==========
@@ -409,4 +415,155 @@ export interface CreateConfigParams {
 export interface UserRolesResult {
   /** 角色代码数组，如 ["admin"] / ["user"] */
   roles: string[];
+}
+
+// ========== RBAC 权限体系：菜单 / 角色 / 用户管理 类型 ==========
+
+/** 菜单节点类型：catalog（目录）| menu（菜单）| button（按钮） */
+export type MenuType = "catalog" | "menu" | "button";
+
+/** 启用状态 */
+export type MenuStatus = "active" | "disabled";
+
+/** 账号状态 */
+export type UserStatus = "active" | "disabled";
+
+/**
+ * 菜单树节点（GET /api/menu/my 返回）。
+ *
+ * 后端按 sort 升序、剔除 button，catalog/menu 两级（或按实际层级）。
+ */
+export interface MenuTreeNode {
+  /** 菜单 id */
+  id: string;
+  /** 权限码 / 唯一标识 */
+  code: string;
+  /** 菜单名称 */
+  name: string;
+  /** 路由路径（catalog 为 null） */
+  path: string | null;
+  /** 图标名（前端映射到图标组件，可为 null） */
+  icon: string | null;
+  /** 同级排序值 */
+  sort: number;
+  /** 子菜单 */
+  children?: MenuTreeNode[];
+}
+
+/** 当前用户菜单结果（GET /api/menu/my） */
+export interface MyMenuResult {
+  /** 侧边栏菜单树 */
+  menus: MenuTreeNode[];
+  /** 用户全部权限码 */
+  permissions: string[];
+}
+
+/**
+ * 菜单项（GET /api/menu/tree 返回的平铺行）。
+ *
+ * 平铺数组 + parentId，前端自行组装 treeData（主理人拍板 A1）。
+ */
+export interface MenuItem {
+  id: string;
+  parentId: string | null;
+  type: MenuType;
+  code: string;
+  name: string;
+  path: string | null;
+  component: string | null;
+  icon: string | null;
+  sort: number;
+  visible: boolean;
+  status: MenuStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 新增菜单入参（POST /api/menu） */
+export interface CreateMenuParams {
+  parentId: string | null;
+  type: MenuType;
+  code: string;
+  name: string;
+  path?: string | null;
+  component?: string | null;
+  icon?: string | null;
+  sort?: number;
+  visible?: boolean;
+  status?: MenuStatus;
+}
+
+/** 编辑菜单入参（PUT /api/menu/:id，code 不可修改） */
+export type UpdateMenuParams = Partial<CreateMenuParams>;
+
+/** 角色列表项（GET /api/role/list） */
+export interface RoleItem {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  /** 是否系统内置角色（admin/user=true，不可删除） */
+  isSystem: boolean;
+  /** 关联用户数 */
+  userCount: number;
+  /** 绑定菜单数；admin 为 null（全部权限） */
+  menuCount: number | null;
+}
+
+/** 角色已绑定菜单结果（GET /api/role/:id/menus） */
+export interface RoleMenuResult {
+  menuIds: string[];
+}
+
+/** 新增角色入参 */
+export interface CreateRoleParams {
+  code: string;
+  name: string;
+  description?: string;
+}
+
+/** 编辑角色入参（code 不可修改） */
+export interface UpdateRoleParams {
+  name?: string;
+  description?: string;
+}
+
+/** 保存角色菜单绑定入参（PUT /api/role/:id/menus） */
+export interface SetRoleMenusParams {
+  menuIds: string[];
+}
+
+/** 管理侧用户列表项（GET /api/user/list） */
+export interface AdminUserItem {
+  id: string;
+  email: string;
+  name: string | null;
+  roles: { id: string; code: string; name: string }[];
+  status: UserStatus;
+  createdAt: string;
+}
+
+/** 用户列表结果（GET /api/user/list） */
+export interface UserListResult {
+  items: AdminUserItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+/** 用户列表查询参数 */
+export interface UserListQuery {
+  keyword?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+/** 分配角色入参（PUT /api/user/:id/roles） */
+export interface AssignRolesParams {
+  roleIds: string[];
+}
+
+/** 设置账号状态入参（PUT /api/user/:id/status） */
+export interface SetUserStatusParams {
+  status: UserStatus;
 }

@@ -23,8 +23,8 @@
  * - 管理员在设置页保存后，本地写回新值（loadAppConfig(force) 或手动更新）。
  */
 
-import { getMyRoles, getConfigsApi } from "@/api";
-import type { EffectiveConfigItem } from "@/api";
+import { getMyRoles, getConfigsApi, getMyMenuApi } from "@/api";
+import type { EffectiveConfigItem, MenuTreeNode } from "@/api";
 
 // ============================================================
 // 类型定义与全局声明
@@ -34,6 +34,10 @@ import type { EffectiveConfigItem } from "@/api";
 export interface AppConfigState {
   /** 当前用户角色代码数组，如 ["admin"] / ["user"] */
   roles: string[];
+  /** 当前用户全部权限码（按钮/菜单级 code），供 hasPermission 使用 */
+  permissions: string[];
+  /** 当前用户侧边栏菜单树（catalog/menu），供 MainLayout 动态渲染 */
+  menus: MenuTreeNode[];
   /** 全部配置项有效状态（按注册表顺序） */
   configs: EffectiveConfigItem[];
   /** 缓存时间戳（毫秒） */
@@ -102,14 +106,18 @@ export async function loadAppConfig(
     return window.__APP_CONFIG__;
   }
 
-  // 并行拉取角色 + 配置，失败各自降级为空
-  const [rolesRes, configsRes] = await Promise.all([
+  // 并行拉取角色 + 权限菜单 + 配置，失败各自降级为空
+  const [rolesRes, menuRes, configsRes] = await Promise.all([
     getMyRoles(),
+    getMyMenuApi(),
     getConfigsApi(),
   ]);
 
   const state: AppConfigState = {
     roles: rolesRes.success && rolesRes.data ? rolesRes.data.roles : [],
+    permissions:
+      menuRes.success && menuRes.data ? menuRes.data.permissions : [],
+    menus: menuRes.success && menuRes.data ? menuRes.data.menus : [],
     configs: configsRes.success && configsRes.data ? configsRes.data : [],
     loadedAt: Date.now(),
   };
@@ -198,4 +206,46 @@ export function getConfigValue<T = unknown>(
 export function isAdmin(roles?: string[]): boolean {
   const r = roles ?? getAppConfig()?.roles ?? [];
   return r.includes("admin");
+}
+
+/**
+ * 判断当前用户是否拥有指定权限码。
+ *
+ * 【判定规则】
+ * 1. window 单例未加载 → 保守返回 false（无缓存不越权）；
+ * 2. admin 角色 → 恒 true（后端 admin 短路，前端 UI 保持一致）；
+ * 3. permissions 命中该 code → true；
+ * 4. 菜单树中存在 code 相同的节点（目录/菜单级 code）→ true。
+ *
+ * 说明：permissions 同时包含菜单级与按钮级 code，故本函数既可用于
+ * 按钮显隐（system:user:grant），也可用于目录/页面级守卫（system）。
+ *
+ * @param code - 权限码（引用 PERMISSIONS 常量）
+ * @returns 是否拥有权限
+ */
+export function hasPermission(code: string): boolean {
+  const state = getAppConfig();
+  if (!state) return false;
+
+  // admin 恒 true（与后端 isAdminRole 短路保持一致）
+  if (state.roles.includes("admin")) return true;
+
+  // 权限码直接命中
+  if (state.permissions.includes(code)) return true;
+
+  // 目录/菜单级 code 兜底：菜单树中存在同 code 节点
+  return menuTreeHasCode(state.menus, code);
+}
+
+/**
+ * 递归判断菜单树中是否存在指定 code 的节点。
+ */
+function menuTreeHasCode(nodes: MenuTreeNode[], code: string): boolean {
+  for (const node of nodes) {
+    if (node.code === code) return true;
+    if (node.children && node.children.length > 0 && menuTreeHasCode(node.children, code)) {
+      return true;
+    }
+  }
+  return false;
 }

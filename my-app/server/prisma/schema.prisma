@@ -9,9 +9,9 @@
  * 和 PrismaClient 构造函数的 datasourceUrl 参数（运行时使用）。
  *
  * 【迁移命令（Prisma 7）】
- * npx prisma migrate dev --name init   → 创建数据库表（读取 prisma.config.ts 的 URL）
- * npx prisma generate                   → 生成 Prisma Client 类型
- * npx prisma studio                     → 打开数据库可视化界面
+ * npx prisma db push       → 同步 schema 到数据库（本项目使用此方式，无 migrations 目录）
+ * npx prisma generate      → 生成 Prisma Client 类型
+ * npx prisma studio        → 打开数据库可视化界面
  *
  * @see https://pris.ly/d/config-datasource
  */
@@ -42,6 +42,7 @@ datasource db {
  * - name      : 用户昵称/姓名，可选
  * - avatar    : 头像图片 URL，null 时前端用首字母占位
  * - bio       : 个人简介，可选
+ * - status    : 账号状态（active | disabled），停用后不可登录（RGBAC 权限体系 P0-11）
  * - createdAt : 注册时间，自动生成
  * - updatedAt : 最后更新时间，Prisma 自动管理
  *
@@ -60,6 +61,13 @@ model User {
   name      String?  @map("name")
   avatar    String?  @map("avatar")
   bio       String?  @map("bio")
+  /**
+   * 账号状态（active | disabled）
+   * - active  : 正常，可登录
+   * - disabled: 已停用，登录被拒 + 已登录 token 请求被踢下线
+   * 使用 @default("active") 保证存量用户同步后全部为 active，不影响现有登录。
+   */
+  status    String   @default("active") @map("status")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -240,15 +248,20 @@ model TraceEvent {
  * - code        : 角色唯一标识，如 "admin" / "user"
  * - name        : 中文名，如 "管理员" / "普通用户"
  * - description : 角色说明（可选）
+ * - isSystem    : 是否系统内置角色（admin/user=true）。内置角色不可删除，
+ *                 防止误删导致系统锁死（RBAC 权限体系 D4/A3）
  */
 model Role {
   id          String     @id @default(uuid()) @map("id")
   code        String     @unique @map("code")
   name        String     @map("name")
   description String?    @map("description")
+  isSystem    Boolean    @default(false) @map("is_system")
   createdAt   DateTime   @default(now()) @map("created_at")
 
   users       UserRole[]
+  // 【RBAC 权限体系】角色-菜单绑定（多对多）。admin 角色不写绑定（走代码短路）。
+  menus       RoleMenu[]
 
   @@map("roles")
 }
@@ -316,4 +329,67 @@ model SystemConfig {
   updatedBy String?  @map("updated_by")
 
   @@map("system_configs")
+}
+
+// 【RBAC 权限体系 新增】============================================
+// Menu 模型 —— 菜单（目录/菜单/按钮 三类型统一建模，自引用成树）
+// ============================================
+/**
+ * 菜单实体 —— 以单表自引用（parentId）建模「目录 / 菜单 / 按钮」三种节点，
+ * 其中 button 的 code 即「按钮级权限码」，纳入角色-菜单绑定（RoleMenu）统一授权。
+ *
+ * 【字段说明】
+ * - parentId  : 父级菜单 id，null 表示顶级（自引用关系 MenuTree）
+ * - type      : 节点类型 catalog（目录）| menu（菜单）| button（按钮）
+ * - code      : 唯一标识，同时作为「权限码」；需符合命名规范 ^[a-z][a-z0-9:_-]*$
+ * - path      : 路由路径（button 为空）
+ * - component : 前端组件/子应用标识（预留，可选）
+ * - icon      : 图标名（前端做「字符串 → 图标组件」映射，button 为空）
+ * - sort      : 排序值（同级升序）
+ * - visible   : 是否显示在侧边栏（button 忽略）
+ * - status    : 启用状态 active | disabled（disabled 对所有角色不可见）
+ */
+model Menu {
+  id         String   @id @default(uuid()) @map("id")
+  parentId   String?  @map("parent_id")
+  type       String   @map("type")            // catalog | menu | button
+  code       String   @unique @map("code")    // 唯一标识；button 即权限码
+  name       String   @map("name")
+  path       String?  @map("path")
+  component  String?  @map("component")
+  icon       String?  @map("icon")
+  sort       Int      @default(0) @map("sort")
+  visible    Boolean  @default(true) @map("visible")
+  status     String   @default("active") @map("status") // active | disabled
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  parent     Menu?     @relation("MenuTree", fields: [parentId], references: [id])
+  children   Menu[]    @relation("MenuTree")
+  roles      RoleMenu[]
+
+  @@index([parentId])
+  @@map("menus")
+}
+
+// 【RBAC 权限体系 新增】============================================
+// RoleMenu 模型 —— 角色-菜单绑定（多对多，双向级联删除）
+// ============================================
+/**
+ * 角色与菜单的多对多关联表（授权单元）。
+ *
+ * 【字段说明】
+ * - roleId / menuId : 复合主键 @@id([roleId, menuId])，天然去重
+ * - 双向 onDelete: Cascade —— 角色或菜单删除时，绑定记录自动清理
+ *
+ * 【admin 约定】admin 角色永不写本表记录，鉴权/取菜单时按角色名短路返回全量，
+ * 从根本上避免「绑定数据与代码规则冲突」导致管理员被锁死。
+ */
+model RoleMenu {
+  roleId String @map("role_id")
+  menuId String @map("menu_id")
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  menu   Menu   @relation(fields: [menuId], references: [id], onDelete: Cascade)
+  @@id([roleId, menuId])
+  @@map("role_menus")
 }

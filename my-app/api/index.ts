@@ -22,7 +22,29 @@ export {
   deleteSiliconFlowKey,
   testSiliconFlowKey,
   getMyRoles,
+  getUserListApi,
+  assignUserRolesApi,
+  setUserStatusApi,
 } from "./modules/user";
+
+// 菜单模块（RBAC 权限体系）
+export {
+  getMyMenuApi,
+  getMenuTreeApi,
+  createMenuApi,
+  updateMenuApi,
+  deleteMenuApi,
+} from "./modules/menu";
+
+// 角色模块（RBAC 权限体系）
+export {
+  getRoleListApi,
+  createRoleApi,
+  updateRoleApi,
+  deleteRoleApi,
+  getRoleMenusApi,
+  setRoleMenusApi,
+} from "./modules/role";
 
 // 个人知识库模块（RAG）
 export {
@@ -110,6 +132,24 @@ export type {
   SaveConfigItem,
   CreateConfigParams,
   UserRolesResult,
+  MenuType,
+  MenuStatus,
+  UserStatus,
+  MenuTreeNode,
+  MyMenuResult,
+  MenuItem,
+  CreateMenuParams,
+  UpdateMenuParams,
+  RoleItem,
+  RoleMenuResult,
+  CreateRoleParams,
+  UpdateRoleParams,
+  SetRoleMenusParams,
+  AdminUserItem,
+  UserListResult,
+  UserListQuery,
+  AssignRolesParams,
+  SetUserStatusParams,
 } from "./types";
 
 // 枚举和常量导出

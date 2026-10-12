@@ -6,6 +6,7 @@ import { useTheme } from 'next-themes';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { getToken } from '@/api';
+import { loadAppConfig } from '@/lib/app-config';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { theme } = useTheme();
@@ -26,6 +27,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     const checkAuth = () => {
       if (getToken()) {
         setAuthed(true);
+        // 兜底加载「菜单/权限/角色」到 window 单例：
+        // 供 system 子目录的 403 守卫与 MainLayout 菜单渲染使用。
+        // 已有缓存时 loadAppConfig 直接返回，不重复请求。
+        loadAppConfig().catch(() => {
+          /* 加载失败静默降级，不阻塞页面 */
+        });
       } else {
         router.replace('/login');
       }

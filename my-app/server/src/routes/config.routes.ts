@@ -8,7 +8,7 @@
  *   GET    /api/config        → 全部配置项的有效状态（一次渲染用）
  *   GET    /api/config/:key   → 单读某配置项的有效值
  *
- * 写接口 —— 仅管理员（authMiddleware + requireRole("admin")）：
+ * 写接口 —— 需 `system:config:update` 权限码（authMiddleware + requirePermission）：
  *   POST   /api/config        → 新增动态配置 { key, type, value, label?, description?, enabled? }
  *   PUT    /api/config        → 批量保存覆盖值 { items: [{ key, value, enabled? }] }
  *   PUT    /api/config/:key   → 单条保存 { value, enabled? }
@@ -17,18 +17,19 @@
  *
  * 【权限口径】（用户确认）
  * - 配置「读」开放给所有登录用户（供前端 window 单例与菜单渲染）；
- * - 配置「写/删」严格限管理员，非管理员返回 403。
+ * - 配置「写/删」需 `system:config:update` 权限码（由原 requireRole(admin) 升级），
+ *   无权限用户返回 403。
  *
  * 【错误约定】
  * - ConfigValidationError（key 未注册/类型不符/范围越界）→ 400
- * - requireRole 未通过 → 403 FORBIDDEN
+ * - requirePermission 未通过 → 403 FORBIDDEN
  * - 其余系统错误 → 走全局 errorHandler（500）
  */
 
 import { Router, type IRouter } from "express";
 import type { Request, Response } from "express";
 import { authMiddleware, requireUser } from "../middleware/auth.js";
-import { requireRole, ROLE_CODES } from "../middleware/rbac.js";
+import { requirePermission, PERMISSION_CODES } from "../middleware/rbac.js";
 import {
   getEffectiveConfigs,
   getConfig,
@@ -106,7 +107,7 @@ configRouter.get("/:key", authMiddleware, async (req, res, next) => {
 configRouter.post(
   "/",
   authMiddleware,
-  requireRole(ROLE_CODES.ADMIN),
+  requirePermission(PERMISSION_CODES.CONFIG_UPDATE),
   async (req, res, next) => {
     try {
       const userId = requireUser(req, res);
@@ -155,7 +156,7 @@ configRouter.post(
 configRouter.put(
   "/",
   authMiddleware,
-  requireRole(ROLE_CODES.ADMIN),
+  requirePermission(PERMISSION_CODES.CONFIG_UPDATE),
   async (req, res, next) => {
     try {
       const userId = requireUser(req, res);
@@ -197,7 +198,7 @@ configRouter.put(
 configRouter.put(
   "/:key",
   authMiddleware,
-  requireRole(ROLE_CODES.ADMIN),
+  requirePermission(PERMISSION_CODES.CONFIG_UPDATE),
   async (req, res, next) => {
     try {
       const userId = requireUser(req, res);
@@ -238,7 +239,7 @@ configRouter.put(
 configRouter.delete(
   "/",
   authMiddleware,
-  requireRole(ROLE_CODES.ADMIN),
+  requirePermission(PERMISSION_CODES.CONFIG_UPDATE),
   async (_req, res, next) => {
     try {
       await resetAllConfigs();
@@ -257,7 +258,7 @@ configRouter.delete(
 configRouter.delete(
   "/:key",
   authMiddleware,
-  requireRole(ROLE_CODES.ADMIN),
+  requirePermission(PERMISSION_CODES.CONFIG_UPDATE),
   async (req, res, next) => {
     try {
       const key = req.params.key as string;

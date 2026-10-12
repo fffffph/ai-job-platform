@@ -23,6 +23,9 @@ import userRouter from "./routes/user.routes.js";
 import resumeRouter from "./routes/resume.routes.js";
 import aiRouter from "./routes/ai.routes.js";
 import configRouter from "./routes/config.routes.js";
+import menuRouter from "./routes/menu.routes.js";
+import roleRouter from "./routes/role.routes.js";
+import adminUserRouter from "./routes/adminUser.routes.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -158,6 +161,41 @@ app.use("/api/ai", aiRouter);
  * - DELETE /api/config/:key   — 单条恢复默认（仅 admin）
  */
 app.use("/api/config", configRouter);
+
+/**
+ * 菜单路由（RBAC 权限体系）
+ *
+ * 所有 /api/menu/* 路径的请求都交给 menuRouter 处理：
+ * - GET    /api/menu/my   — 当前用户菜单树 + 权限码（登录）
+ * - GET    /api/menu/tree — 全量菜单（system:menu）
+ * - POST   /api/menu      — 新增菜单（system:menu:create）
+ * - PUT    /api/menu/:id  — 编辑菜单（system:menu:update）
+ * - DELETE /api/menu/:id  — 删除菜单（system:menu:delete）
+ */
+app.use("/api/menu", menuRouter);
+
+/**
+ * 角色路由（RBAC 权限体系）
+ *
+ * 所有 /api/role/* 路径的请求都交给 roleRouter 处理：
+ * - GET    /api/role/list      — 角色列表（system:role）
+ * - GET    /api/role/:id/menus — 角色已绑定菜单（system:role）
+ * - POST   /api/role           — 新增角色（system:role:create）
+ * - PUT    /api/role/:id       — 编辑角色（system:role:update）
+ * - DELETE /api/role/:id       — 删除角色（system:role:delete）
+ * - PUT    /api/role/:id/menus — 保存角色菜单绑定（system:role:grant）
+ */
+app.use("/api/role", roleRouter);
+
+/**
+ * 用户管理路由（RBAC 权限体系，管理侧）
+ *
+ * 与用户自助路由 userRouter 共享 /api/user 前缀，按注册顺序互补：
+ * - GET /api/user/list        — 用户列表（system:user）
+ * - PUT /api/user/:id/roles   — 分配角色（system:user:grant）
+ * - PUT /api/user/:id/status  — 停用/启用（system:user:disable）
+ */
+app.use("/api/user", adminUserRouter);
 
 // ============================================================
 // 全局错误处理

@@ -10,9 +10,13 @@
 | 📄 **简历优化** | 上传 PDF/DOCX/TXT → AI 结构化分析 → 岗位匹配度评估 → 优化建议 + 多格式导出（独立 qiankun 子应用） |
 | ⚡ **职位发现** | ReAct Agent 自主规划推荐职位，输出推荐原因 + 自动招呼语 + BOSS 直聘直达链接 |
 | 📚 **个人知识库** | 支持 Excel 模板批量导入 / 纯文本解析，pgvector 混合检索 + LLM 增强问答，AI 决策过程全程可观测 |
+| 🕘 **决策历史** | AI Trace 落库后的历史回放：按类型查看每一次 AI 执行的节点时间轴 |
 | 👤 **个人中心** | 配置 DeepSeek / SiliconFlow API Key（用户级、加密存储）、维护求职画像 |
+| ⚙️ **系统设置** | 权限体系 + 配置中心：菜单管理 / 角色管理 / 用户管理 / 基础配置（仅授权角色可见） |
 
-**AI 应用体系亮点**：单点 LLM 调用已升级为「**可编排、可记忆、可检索、可观测**」的分层架构，包含 AI Trace 面板（决策过程时间轴）、用户画像 Memory、知识库 RAG 三大范式落地。
+**两大体系亮点**：
+- **AI 应用体系**：单点 LLM 调用已升级为「**可编排、可记忆、可检索、可观测**」的分层架构，包含 AI Trace（决策时间轴 + 历史回放）、用户画像 Memory、知识库 RAG 三大范式落地；
+- **权限体系（RBAC）**：角色-菜单多对多绑定驱动侧边栏动态渲染，菜单/按钮两级权限码，「前端隐藏 + 路由守卫 + 后端鉴权」三层生效（详见下方「权限体系」）。
 
 ## 🛠️ 技术栈
 
@@ -28,7 +32,7 @@
 - **AI 编排**：LangGraph（状态图 + ReAct Agent 循环）+ LangChain
 - **模型接入**：DeepSeek（LLM，OpenAI 兼容 + Function Calling）、SiliconFlow（Embedding）
 - **流式输出**：SSE（Server-Sent Events）
-- **鉴权**：JWT + bcrypt，AES-256-GCM 加密存储用户 API Key
+- **鉴权**：JWT + bcrypt；RBAC 权限体系（角色-菜单绑定 + 权限码 `requirePermission`）；AES-256-GCM 加密存储用户 API Key
 
 ### 子应用（resume-optimizer，端口 3001）
 - **构建工具**：Vite 6 + React 19 + Ant Design 6
@@ -46,15 +50,20 @@ ai-job-platform/
 ├── my-app/                        # 主应用（基座）Next.js + 内嵌后端
 │   ├── app/                       # App Router 页面路由
 │   │   ├── (auth)/                # 登录 / 注册
-│   │   ├── dashboard/             # 工作台 / 职位发现 / 简历优化 / 个人中心
+│   │   ├── dashboard/             # 工作台 / 职位发现 / 简历优化 / 个人中心 / 决策历史 / 系统设置
 │   │   └── api/                   # Next.js 历史 API 路由（/api/chat、/api/parse-resume）
 │   ├── components/                # 可复用组件
 │   │   ├── KnowledgeBasePanel.tsx # 个人知识库 RAG 面板
 │   │   ├── AITracePanel.tsx       # AI 决策过程时间轴（可观测）
 │   │   └── ...                    # 首页区块 / 主题 Provider / UI 基础组件
 │   ├── api/                       # 前端 API 客户端（axios 封装 + SSE 解析 + 类型）
-│   │   └── modules/               # auth / jobs / knowledge / user 模块化请求
-│   ├── hooks/  lib/  public/  styles/
+│   │   └── modules/               # auth / jobs / knowledge / user / menu / role / config / trace 模块化请求
+│   ├── lib/                       # ★ 权限与配置工具
+│   │   ├── app-config.ts          # window 单例：roles / permissions / menus / configs + hasPermission()
+│   │   ├── permissions.ts         # 前端权限码常量（与后端 PERMISSION_CODES 对齐）
+│   │   ├── menu-icons.tsx         # 图标名 → Antd 图标组件映射
+│   │   └── menu-tree.ts           # 后端菜单树 → Antd Menu items + 选中/展开计算
+│   ├── hooks/  public/  styles/
 │   ├── server/                    # ★ Express 后端（独立工程，见下方）
 │   ├── Dockerfile                 # 主应用容器镜像
 │   └── package.json
@@ -72,8 +81,11 @@ ai-job-platform/
 │   │   │   ├── tools/             # Function Calling + MCP 工具
 │   │   │   ├── stream/  trace/    # SSE 网关 / AI Trace 埋点
 │   │   ├── controllers/  services/  routes/  middleware/
+│   │   │   ├── services/          # menu / role / userAdmin（RBAC）+ resume / auth / keys
+│   │   │   ├── routes/            # menu / role / adminUser / config / ai / resume / auth
+│   │   │   └── middleware/        # auth.ts（JWT 验票）+ rbac.ts（★ 权限码鉴权）
 │   │   └── lib/                   # prisma 客户端 / crypto 加密工具
-│   ├── prisma/                    # schema.prisma + seed.ts（数据模型）
+│   ├── prisma/                    # schema.prisma + seed.ts / seed-roles.ts（数据模型 + 角色菜单种子）
 │   ├── .env                       # 本地环境变量（含密钥，不入库）
 │   └── Dockerfile
 │
@@ -88,6 +100,9 @@ ai-job-platform/
 ├── proxy_headers.conf             # 代理转发通用头
 ├── docker-compose.yml             # 5 容器一键编排
 ├── .env.docker                    # Docker 部署环境变量（含密钥，不入库）
+├── docs/                          # 设计与需求文档
+│   ├── prd-rbac-menu.md           # 权限体系 PRD
+│   └── arch-rbac-menu.md          # 权限体系架构设计 + 任务分解
 ├── ai-architecture-design.md      # AI 应用体系架构设计文档
 ├── docker-deploy-plan.md          # Docker 部署方案说明
 └── README.md                      # 本文档
@@ -122,10 +137,12 @@ cd my-app/server
 cp .env.example .env   # 从模板复制，再填写 DATABASE_URL / JWT_SECRET / API Key
 npm install            # server 独立使用 npm（非 pnpm）
 npm run db:push        # 首次运行：同步 Prisma schema 到数据库
+npm run db:seed:roles  # 首次运行：初始化角色与菜单树（RBAC 基线，幂等可重跑）
 npm run dev            # prisma generate && tsx watch（启动前自动生成 client）
 ```
 
 > 首次需先准备 PostgreSQL（含 pgvector），并正确填写 `.env` 中的 `DATABASE_URL`。
+> 首次初始化顺序：`npm run db:seed`（创建测试用户）→ `npm run db:seed:roles`（初始化角色与菜单树，并把 `admin@example.com` 绑定为管理员）。两个脚本均幂等，可重复执行。
 
 **② 启动子应用（简历优化，端口 3001）**
 
@@ -208,7 +225,43 @@ docker compose up -d --build
 | `/api/ai` | `POST /knowledge/upload` `POST /knowledge/ask` `POST /knowledge/parse-text` `POST /knowledge/batch` | 知识库导入 / 问答 / 文本解析 / 批量导入 |
 | `/api/ai` | `GET /knowledge/template` `GET /knowledge/file` `GET /knowledge/file-info` `DELETE /knowledge/file` | 知识库模板下载 / 文件下载 / 元信息 / 删除 |
 | `/api/ai` | `GET /profile` `PUT /profile` | 求职画像读写 |
+| `/api/ai` | `GET /trace/runs` `GET /trace/runs/:id` | AI 决策历史（Trace 落库回放） |
+| `/api/config` | `GET /` `GET /:key`（登录可读）；`POST /` `PUT /` `PUT /:key` `DELETE /` `DELETE /:key`（需 `system:config:update`） | 系统配置中心 |
+| `/api/menu` | `GET /my`（登录）；`GET /tree` `POST /` `PUT /:id` `DELETE /:id`（菜单管理权限码） | 动态菜单 + 菜单管理 |
+| `/api/role` | `GET /list` `GET /:id/menus` `POST /` `PUT /:id` `DELETE /:id` `PUT /:id/menus` | 角色管理 + 菜单绑定 |
+| `/api/user` | `GET /list` `PUT /:id/roles` `PUT /:id/status` | 用户管理（分配角色 / 停用启用） |
 | `/api` | `GET /health` | 健康检查 |
+
+## 🔐 权限体系（RBAC）
+
+菜单、角色、用户三级关系全部落在数据库，「谁能看见什么、能点什么」由角色与菜单的绑定关系决定，侧边栏由后端菜单树动态渲染。
+
+**数据模型**（`prisma/schema.prisma`）
+
+| 模型 | 说明 |
+|---|---|
+| `Menu` | 菜单即权限点，单表自引用成树；`type` 分 `catalog` 目录 / `menu` 菜单 / `button` 按钮；`code` 唯一标识，即权限码 |
+| `RoleMenu` | 角色-菜单多对多绑定（复合主键），决定某角色能看见/操作什么 |
+| `Role` | 角色（`code` 创建后不可改；`isSystem` 内置角色不可删） |
+| `UserRole` | 用户-角色多对多绑定（新注册用户自动绑 `user` 角色） |
+
+**三层生效**：前端隐藏只是体验层，后端才是真正的安全边界。
+
+| 层 | 实现 | 作用 |
+|---|---|---|
+| 菜单渲染 | `MainLayout` 消费 `GET /api/menu/my` + `lib/menu-tree.ts` | 不同角色看到不同侧边栏 |
+| 路由守卫 | `app/dashboard/system/layout.tsx` + `lib/app-config.ts` 的 `hasPermission()` | 无权限直接访问显示 403 提示页，不白屏 |
+| 接口鉴权 | `middleware/rbac.ts` 的 `requirePermission(...codes)` | 真正的拦截；实时读库，权限变更即时生效 |
+
+**关键规则**
+- **admin 强制全权**：`isAdminRole()` 是唯一短路入口（被鉴权/取权限/取菜单三处复用），admin 永不写 `RoleMenu`，其角色不可删、权限不可编辑；
+- **button 是权限码而非界面元素**：它不会出现在侧边栏，也不自动生成按钮，需由代码用 `hasPermission()`（前端显隐）/ `requirePermission()`（后端鉴权）消费后才生效；
+- **权限变更重新登录生效**：后端每次请求实时查库，前端菜单/按钮需重新登录刷新（不做实时推送）；
+- **停用用户**：登录时拦截（`USER_DISABLED`），已登录用户的旧 token 也会被踢下线。
+
+权限码命名规范 `模块[:资源][:动作]`（全小写，≤64 字符），如 `system` / `system:role` / `system:role:grant`。
+
+> 设计文档见 `docs/prd-rbac-menu.md`（需求）与 `docs/arch-rbac-menu.md`（架构 + 任务分解）。
 
 ## 🧠 AI 应用体系（五层架构）
 

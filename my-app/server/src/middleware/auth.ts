@@ -30,6 +30,7 @@
 
 import type { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
+import prisma from "../lib/prisma.js";
 
 /**
  * JWT 签名密钥（与服务层 auth.service.ts 中一致）
@@ -51,13 +52,18 @@ export interface AuthUser {
  * 认证中间件
  *
  * 必须在所有需要保护的 Controller 之前使用。
- * 中间件只负责"验票"，不关心用户的具体权限（权限逻辑在 Controller/Service 层处理）。
+ * 中间件负责"验票"（确认 Token 有效），并在 payload 有效后追加
+ * 账号状态校验（P1-4 停用踢下线）：Token 有效但用户已被停用 / 不存在 → 401。
+ *
+ * 【为什么在鉴权链路校验 status？】
+ * 停用用户若只在登录时拦截，其已签发的 Token 在过期前仍可用。
+ * 依据 P1-4，这里对每个请求实时校验 status，被停用即立即失效，无需等 Token 过期。
  */
-export function authMiddleware(
+export async function authMiddleware(
   req: Request,
   res: Response,
   next: NextFunction
-): void {
+): Promise<void> {
   // ---------- 步骤 1：提取 Token ----------
   const authHeader = req.headers.authorization;
 
@@ -111,14 +117,39 @@ export function authMiddleware(
       return;
     }
 
-    // ---------- 步骤 4：挂载用户信息 ----------
+    // ---------- 步骤 4：账号状态校验（P1-4 停用踢下线） ----------
+    // 实时读库：Token 有效但用户已被停用或已删除 → 401，强制前端跳登录。
+    const account = await prisma.user.findUnique({
+      where: { id: decoded.sub },
+      select: { status: true },
+    });
+
+    if (!account) {
+      res.status(401).json({
+        success: false,
+        message: "Token 无效，请重新登录",
+        code: "UNAUTHORIZED",
+      });
+      return;
+    }
+
+    if (account.status === "disabled") {
+      res.status(401).json({
+        success: false,
+        message: "账号已被停用，请联系管理员",
+        code: "USER_DISABLED",
+      });
+      return;
+    }
+
+    // ---------- 步骤 5：挂载用户信息 ----------
     // 将用户信息挂载到 req 上，后续 Controller 通过 req.user 访问
     req.user = {
       id: decoded.sub,
       email: decoded.email ?? "",
     } satisfies AuthUser;
 
-    // Token 有效，放行到下一个中间件/路由处理器
+    // Token 有效且账号正常，放行到下一个中间件/路由处理器
     next();
   } catch (error: any) {
     // ---------- Token 校验失败 ----------
