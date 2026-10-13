@@ -10,17 +10,31 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Input, Button, Tag } from "antd";
 import { SendOutlined } from "@ant-design/icons";
+import ThinkingPanel from "../../../components/ThinkingPanel";
 import type { ChatMessage } from "../../../api";
 
 interface Props {
   messages: ChatMessage[];
   isStreaming: boolean;
   onSend: (text: string) => void;
+  /** 当前这一轮是否正在深度思考（进行中时逐字展示思考过程） */
+  thinkingActive: boolean;
+  /** 当前这一轮已到达的思考过程全文 */
+  thinkingContent: string;
+  /** 当前这一轮思考耗时（毫秒） */
+  thinkingMs: number;
 }
 
 const QUICK_ACTIONS = ["精简内容", "更多量化数据", "更专业表达", "优化关键词"];
 
-const ChatPanel: React.FC<Props> = ({ messages, isStreaming, onSend }) => {
+const ChatPanel: React.FC<Props> = ({
+  messages,
+  isStreaming,
+  onSend,
+  thinkingActive,
+  thinkingContent,
+  thinkingMs,
+}) => {
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -50,7 +64,9 @@ const ChatPanel: React.FC<Props> = ({ messages, isStreaming, onSend }) => {
             key={i}
             style={{
               display: "flex",
-              justifyContent: m.role === "user" ? "flex-end" : "flex-start",
+              // 改为纵向排列：气泡下面还要挂该轮的思考过程面板
+              flexDirection: "column",
+              alignItems: m.role === "user" ? "flex-end" : "flex-start",
               marginBottom: 12,
             }}
           >
@@ -75,9 +91,31 @@ const ChatPanel: React.FC<Props> = ({ messages, isStreaming, onSend }) => {
             >
               {m.content}
             </div>
+
+            {/* 该轮修改的思考过程（跟着消息走，回看历史时不会张冠李戴）。
+                默认折叠，点标题可展开 —— 聊天里思考是补充信息，不是主角。 */}
+            {m.reasoning && (
+              <ThinkingPanel
+                active={false}
+                content={m.reasoning}
+                elapsedMs={m.reasoningMs}
+              />
+            )}
           </div>
         ))}
-        {isStreaming && (
+
+        {/* 深度思考进行中：逐字展示思考过程（未开启思考时后端不会推
+            reasoning 事件，这个面板自然不会出现） */}
+        {isStreaming && thinkingActive && (
+          <ThinkingPanel
+            active
+            content={thinkingContent}
+            elapsedMs={thinkingMs}
+          />
+        )}
+
+        {/* 未开启思考时的普通等待提示（开了思考就由上面的面板接管，避免两句提示打架） */}
+        {isStreaming && !thinkingActive && (
           <div
             style={{
               color: "var(--text-3)",
@@ -85,7 +123,7 @@ const ChatPanel: React.FC<Props> = ({ messages, isStreaming, onSend }) => {
               padding: "8px 14px",
             }}
           >
-            AI 正在思考...
+            AI 正在修改简历...
           </div>
         )}
         <div ref={bottomRef} />

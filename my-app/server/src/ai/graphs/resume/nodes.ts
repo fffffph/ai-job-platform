@@ -36,6 +36,20 @@ import {
 } from "../../prompts/schemas/match-result.js";
 
 /**
+ * 简历分析节点可注入的 Prompt（P3 参数收敛：由配置中心注入）。
+ *
+ * 所有字段均可选，缺省时回退到各 prompt 文件内置默认值。
+ */
+export interface ResumeNodePrompts {
+  /** 简历诊断专家人设（默认 RESUME_EXPERT_SYSTEM_PROMPT，配置项 prompt.resume_expert） */
+  resumeExpertPrompt?: string;
+  /** 简历分析任务指令（默认 ANALYZE_TASK_PROMPT，配置项 prompt.analyze_task） */
+  analyzeTaskPrompt?: string;
+  /** 岗位匹配任务指令（默认 MATCH_TASK_PROMPT，配置项 prompt.match_task） */
+  matchTaskPrompt?: string;
+}
+
+/**
  * 解析节点（纯文本处理，不调用 LLM）。
  *
  * 对简历原文做轻量规范化：
@@ -76,8 +90,9 @@ export function parseNode(state: ResumeState): Partial<ResumeState> {
  * ResumeAnalysis 对象（结构化输出为非流式，故不再逐 token 输出）。
  *
  * @param llm - 由 createDeepSeekChat 创建、已指向 DeepSeek 的模型实例
+ * @param options - 可选：节点 Prompt（P3 参数收敛，缺省走内置默认值）
  */
-export function createAnalyzeNode(llm: ChatOpenAI) {
+export function createAnalyzeNode(llm: ChatOpenAI, options?: ResumeNodePrompts) {
   return async function analyzeNode(
     state: ResumeState
   ): Promise<Partial<ResumeState>> {
@@ -86,13 +101,21 @@ export function createAnalyzeNode(llm: ChatOpenAI) {
     // 绑定 zod schema 的结构化模型，invoke 返回 ResumeAnalysis 对象。
     // 注意：显式指定 method: "functionCalling"，因为 DeepSeek 不支持 OpenAI 的
     // response_format（jsonMode），必须走 tool calling 方式做结构化输出。
+    //
+    // ⚠️ functionCalling 会强制 tool_choice，与思考模式互斥（同时用会 400）；
+    // 简历链路的模型实例由装配层固定关闭思考（见 config/ai-config.ts 的
+    // RESUME_THINKING_SUPPORTED）。
     const structuredLlm = llm.withStructuredOutput(ResumeAnalysisSchema, {
       method: "functionCalling",
     });
 
     const messages = [
-      new SystemMessage(RESUME_EXPERT_SYSTEM_PROMPT),
-      new HumanMessage(buildAnalyzeMessage(state.resumeText)),
+      new SystemMessage(
+        options?.resumeExpertPrompt ?? RESUME_EXPERT_SYSTEM_PROMPT
+      ),
+      new HumanMessage(
+        buildAnalyzeMessage(state.resumeText, options?.analyzeTaskPrompt)
+      ),
     ];
 
     let analysis: ResumeAnalysis;
@@ -112,6 +135,7 @@ export function createAnalyzeNode(llm: ChatOpenAI) {
       timestamp: new Date().toISOString(),
     });
 
+    // 本链路固定关闭思考（functionCalling 与思考模式互斥），故不产出思考链
     return { analysis };
   };
 }
@@ -123,8 +147,9 @@ export function createAnalyzeNode(llm: ChatOpenAI) {
  * 返回强类型 MatchResult。无 JD 时条件路由不会进入本节点，此处保留防御性兜底。
  *
  * @param llm - 由 createDeepSeekChat 创建、已指向 DeepSeek 的模型实例
+ * @param options - 可选：节点 Prompt（P3 参数收敛，缺省走内置默认值）
  */
-export function createMatchNode(llm: ChatOpenAI) {
+export function createMatchNode(llm: ChatOpenAI, options?: ResumeNodePrompts) {
   return async function matchNode(
     state: ResumeState
   ): Promise<Partial<ResumeState>> {
@@ -145,13 +170,22 @@ export function createMatchNode(llm: ChatOpenAI) {
       return output;
     }
 
+    // ⚠️ 同 analyze 节点：functionCalling 强制 tool_choice，与思考模式互斥
     const structuredLlm = llm.withStructuredOutput(MatchResultSchema, {
       method: "functionCalling",
     });
 
     const messages = [
-      new SystemMessage(RESUME_EXPERT_SYSTEM_PROMPT),
-      new HumanMessage(buildMatchMessage(state.resumeText, jobDescription)),
+      new SystemMessage(
+        options?.resumeExpertPrompt ?? RESUME_EXPERT_SYSTEM_PROMPT
+      ),
+      new HumanMessage(
+        buildMatchMessage(
+          state.resumeText,
+          jobDescription,
+          options?.matchTaskPrompt
+        )
+      ),
     ];
 
     let match: MatchResult;
@@ -170,6 +204,7 @@ export function createMatchNode(llm: ChatOpenAI) {
       timestamp: new Date().toISOString(),
     });
 
+    // 同 analyze 节点：functionCalling 与思考模式互斥，本节点不产出思考链
     return { match };
   };
 }

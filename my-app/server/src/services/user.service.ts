@@ -13,6 +13,7 @@
 
 import bcrypt from "bcrypt";
 import prisma from "../lib/prisma.js";
+import { getUserRoleCodes } from "../middleware/rbac.js";
 
 const BCRYPT_SALT_ROUNDS = parseInt(
   process.env.BCRYPT_SALT_ROUNDS || "10",
@@ -169,4 +170,18 @@ export async function updateAvatar(
   });
 
   return { avatar: user.avatar || "" };
+}
+
+/**
+ * 获取当前用户的角色代码列表
+ *
+ * 【用途】
+ * 前端登录后调用一次，据此判断是否管理员，
+ * 动态控制「系统设置」等管理入口的显示/隐藏。
+ *
+ * @param userId - 用户 ID
+ * @returns 角色代码数组，如 ["admin"] 或 ["user"]
+ */
+export async function getUserRoles(userId: string): Promise<string[]> {
+  return getUserRoleCodes(userId);
 }

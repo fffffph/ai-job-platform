@@ -23,12 +23,29 @@ export const CHUNK_SIZE = 512;
 export const CHUNK_OVERLAP = 128;
 
 /**
+ * chunkText 的可选参数（P3 参数收敛：由配置中心注入）。
+ *
+ * 所有字段均可选，缺省时回退到本文件顶部的内置默认值。
+ */
+export interface ChunkOptions {
+  /** 每块目标字数（默认 512，配置项 rag.chunk_size） */
+  chunkSize?: number;
+  /** 相邻块重叠字数（默认 128，配置项 rag.chunk_overlap） */
+  chunkOverlap?: number;
+}
+
+/**
  * 对文本进行结构感知分块。
  *
- * @param text - 原始全文
+ * @param text    - 原始全文
+ * @param options - 可选参数（分块大小/重叠），缺省走内置默认值
  * @returns 分块后的字符串数组（不含空白块）
  */
-export function chunkText(text: string): string[] {
+export function chunkText(text: string, options?: ChunkOptions): string[] {
+  // 参数收敛：分块大小与重叠从配置中心注入，缺省走默认值
+  const chunkSize = options?.chunkSize ?? CHUNK_SIZE;
+  const chunkOverlap = options?.chunkOverlap ?? CHUNK_OVERLAP;
+
   // 统一换行符并去除首尾空白
   const normalized = text.replace(/\r\n?/g, "\n").trim();
   if (!normalized) {
@@ -46,22 +63,22 @@ export function chunkText(text: string): string[] {
 
   for (const seg of segments) {
     // 单个逻辑段过长：先冲刷已有块，再对该段做固定窗口硬切
-    if (seg.length > CHUNK_SIZE) {
+    if (seg.length > chunkSize) {
       if (current) {
         chunks.push(current);
         current = "";
       }
-      chunks.push(...hardSplit(seg, CHUNK_SIZE, CHUNK_OVERLAP));
+      chunks.push(...hardSplit(seg, chunkSize, chunkOverlap));
       continue;
     }
 
     // 正常合并：当前块 + 该段不超过目标大小则继续累积
     const candidate = current ? `${current}\n\n${seg}` : seg;
 
-    if (candidate.length > CHUNK_SIZE) {
-      // 超出目标大小：结束当前块，并用上一块尾部 128 字作为下一块的开头（重叠）
+    if (candidate.length > chunkSize) {
+      // 超出目标大小：结束当前块，并用上一块尾部重叠字作为下一块的开头（重叠）
       chunks.push(current);
-      current = `${current.slice(-CHUNK_OVERLAP)}\n\n${seg}`;
+      current = `${current.slice(-chunkOverlap)}\n\n${seg}`;
     } else {
       current = candidate;
     }

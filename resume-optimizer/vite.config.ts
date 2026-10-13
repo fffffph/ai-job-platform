@@ -42,6 +42,16 @@ export default defineConfig(({ mode }) => {
 
     // ========== 开发服务器配置 ==========
     server: {
+      /**
+       * 监听所有网卡地址（IPv4 + IPv6）。
+       *
+       * 【为什么必须显式设置？】
+       * Windows 上 Vite 默认 host='localhost'，Node 解析后往往只绑定 ::1（IPv6），
+       * 此时若浏览器按 IPv4（127.0.0.1）发起连接就会失败，
+       * 表现为 qiankun 加载子应用报 `Failed to fetch`（实测服务端资源全部可达，
+       * 只是监听地址不全）。设为 true 后同时监听 IPv4/IPv6，消除解析歧义。
+       */
+      host: true,
       // 子应用运行在独立端口，避免与主应用（Next.js 默认 3000）冲突
       port: 3001,
       strictPort: true,

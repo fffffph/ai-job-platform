@@ -30,6 +30,8 @@ import {
   Typography,
   App,
   Divider,
+  Switch,
+  Tooltip,
 } from "antd";
 import {
   ThunderboltOutlined,
@@ -38,11 +40,14 @@ import {
   DollarOutlined,
   LinkOutlined,
   CopyOutlined,
+  QuestionCircleOutlined,
 } from "@ant-design/icons";
 import { motion } from "framer-motion";
 import { recommendJobsStream, getJobProfileApi } from "@/api";
-import type { TraceEvent, JobRecommendation } from "@/api";
+import type { TraceEvent, ReasoningEntry, JobRecommendation } from "@/api";
 import AITracePanel from "@/components/AITracePanel";
+import ThinkingPanel from "@/components/ThinkingPanel";
+import { useThinkingPreference } from "@/hooks/useThinkingPreference";
 
 const { Text, Paragraph } = Typography;
 
@@ -63,6 +68,22 @@ const JobsPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [remembered, setRemembered] = useState(false);
   const [traceEvents, setTraceEvents] = useState<TraceEvent[]>([]);
+
+  // ========== 深度思考状态 ==========
+  /** 本次请求后端是否开启了深度思考（meta 事件下发） */
+  const [thinkingEnabled, setThinkingEnabled] = useState(false);
+  /** 是否正在思考（ReAct 每轮开始前点亮，该轮思考结果到达后熄灭） */
+  const [thinkingActive, setThinkingActive] = useState(false);
+  /** 已到达的思考过程（ReAct 多轮 → 多段） */
+  const [reasoningEntries, setReasoningEntries] = useState<ReasoningEntry[]>([]);
+
+  /**
+   * 深度思考开关偏好。
+   *
+   * effective = 全局熔断（配置中心 switch.deep_thinking）∩ 用户本地偏好，
+   * 这才是真正下发给后端的值；后端还会再判定一次，并以 meta 事件回传结论。
+   */
+  const thinking = useThinkingPreference();
 
   // 【P5】加载时读取已保存的求职画像，回填表单（跨轮记忆）
   useEffect(() => {
@@ -102,6 +123,15 @@ const JobsPage: React.FC = () => {
     setTraceEvents([]);
     setPhase("正在启动职位发现 Agent…");
     setSearchRounds(0);
+    // 重置思考面板，避免上一轮的内容残留
+    setThinkingEnabled(false);
+    setThinkingActive(false);
+    setReasoningEntries([]);
+
+    // 用局部变量而不是 state 记录「后端是否开启思考」：
+    // onStart 之后的多个回调由同一个 SSE 循环连续触发，
+    // 此时 React 的 state 还没提交，读 state 会拿到旧值。
+    let thinkingOn = false;
 
     await recommendJobsStream(
       {
@@ -110,16 +140,33 @@ const JobsPage: React.FC = () => {
         expectedSalary: expectedSalary.trim(),
       },
       {
-        onStart: () => setPhase("Agent 正在分析求职意向…"),
+        onStart: (meta) => {
+          thinkingOn = meta?.thinking?.enabled === true;
+          setThinkingEnabled(thinkingOn);
+          // Agent 起来后第一件事就是推理，立即点亮思考中
+          if (thinkingOn) setThinkingActive(true);
+          setPhase("Agent 正在分析求职意向…");
+        },
+        onReasoning: (entry) => {
+          // 本轮思考结束：累积内容并熄灯（下一轮开始时再点亮）
+          setReasoningEntries((prev) => [...prev, entry]);
+          setThinkingActive(false);
+        },
         onAgentAction: (action) => {
           if (action === "call_tools") {
             setSearchRounds((n) => n + 1);
             setPhase("Agent 正在搜索职位库…");
+            // 下一步会回到 agent 再推理一轮
+            if (thinkingOn) setThinkingActive(true);
           } else {
             setPhase("搜索完成，正在生成推荐…");
           }
         },
-        onToolsDone: () => setPhase("已获取职位数据，Agent 继续分析…"),
+        onToolsDone: () => {
+          setPhase("已获取职位数据，Agent 继续分析…");
+          // 工具执行完，回到 agent 再思考一轮
+          if (thinkingOn) setThinkingActive(true);
+        },
         onFinalize: () => setPhase("正在生成推荐原因与招呼语…"),
         onTrace: (events) => {
           // 【P6】接收节点级 trace，供 AI Trace 面板展示决策过程
@@ -128,16 +175,24 @@ const JobsPage: React.FC = () => {
         onRecommendations: (result) => {
           setRecommendation(result);
           setPhase("");
+          setThinkingActive(false);
           // 【P5】推荐成功 → 画像已由后端自动保存，提示用户已记住偏好
           setRemembered(true);
         },
         onError: (msg) => {
           setError(msg);
           setPhase("");
+          setThinkingActive(false);
         },
+      },
+      {
+        // 会话级意图：后端还会叠加全局熔断，最终以后端 meta 回传的结论为准
+        thinking: thinking.effective,
       }
     );
 
+    // 兜底熄灯：覆盖异常中断的情况
+    setThinkingActive(false);
     setLoading(false);
   };
 
@@ -188,6 +243,40 @@ const JobsPage: React.FC = () => {
             智能推荐
           </Button>
         </Space>
+
+        {/* 深度思考开关：默认关闭，开启后 Agent 每轮决策都会先推理再行动 */}
+        <div
+          style={{
+            marginTop: 12,
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+          }}
+        >
+          <Switch
+            size="small"
+            checked={thinking.effective}
+            disabled={!thinking.available}
+            onChange={thinking.setEnabled}
+          />
+          <Text style={{ fontSize: 13 }}>深度思考</Text>
+          <Tooltip
+            title={
+              thinking.available
+                ? "开启后 Agent 每一轮决策都会先推理再行动：搜索策略更合理，但整体耗时明显变长（可能一到两分钟）。推理过程会展示在下方，可展开查看。"
+                : "管理员已在系统设置中关闭「深度思考」能力"
+            }
+          >
+            <QuestionCircleOutlined
+              style={{ color: "var(--muted-foreground, #999)", cursor: "help" }}
+            />
+          </Tooltip>
+          {!thinking.available && (
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              已由管理员关闭
+            </Text>
+          )}
+        </div>
       </Card>
 
       {/* 错误提示 */}
@@ -239,6 +328,14 @@ const JobsPage: React.FC = () => {
             </div>
           </div>
         </Card>
+      )}
+
+      {/* 【深度思考】思考过程面板：ReAct 多轮会累积多段，按节点分段展示。
+          放在加载卡片之外，这样请求结束后仍可回看。 */}
+      {thinkingEnabled && (thinkingActive || reasoningEntries.length > 0) && (
+        <div style={{ marginBottom: 24 }}>
+          <ThinkingPanel active={thinkingActive} entries={reasoningEntries} />
+        </div>
       )}
 
       {/* AI 决策过程（P6 可观测） */}

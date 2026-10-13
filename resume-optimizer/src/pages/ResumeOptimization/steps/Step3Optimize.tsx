@@ -15,6 +15,7 @@ import MatchCard from "../components/MatchCard";
 import ChatPanel from "../components/ChatPanel";
 import ResumePreview from "../components/ResumePreview";
 import VersionHistory from "../components/VersionHistory";
+import ThinkingPanel from "../../../components/ThinkingPanel";
 import type { ChatMessage, ResumeTag, MatchResult } from "../../../api";
 import type { ResumeVersion } from "../../../hooks/useConversation";
 
@@ -35,6 +36,17 @@ interface Props {
   onRollback: (index: number) => void;
   onBack: () => void;
   onNextStep: () => void;
+  /** 当前这一轮的深度思考状态（对话修改中） */
+  thinkingActive: boolean;
+  thinkingContent: string;
+  thinkingMs: number;
+  /**
+   * 首轮优化的思考过程快照。
+   *
+   * 单独传进来是因为 Step2 在优化完成后就卸载了 —— 若不快照一份，
+   * 用户"分析时看得到、结束后就看不到"。
+   */
+  optimizeThinking: { content: string; ms: number };
 }
 
 const Step3Optimize: React.FC<Props> = ({
@@ -52,6 +64,10 @@ const Step3Optimize: React.FC<Props> = ({
   onRollback,
   onBack,
   onNextStep,
+  thinkingActive,
+  thinkingContent,
+  thinkingMs,
+  optimizeThinking,
 }) => (
   <motion.div
     initial={{ opacity: 0 }}
@@ -87,6 +103,16 @@ const Step3Optimize: React.FC<Props> = ({
     </div>
 
     {/* 左右两栏：对话在左（更符合用户输入习惯） */}
+      {/* 首轮优化的思考过程：优化完成后 Step2 会卸载，这里保留一份可回看的快照，
+          否则用户"分析时看得到、结束后就看不到" */}
+      {optimizeThinking.content && (
+        <ThinkingPanel
+          active={false}
+          content={optimizeThinking.content}
+          elapsedMs={optimizeThinking.ms}
+        />
+      )}
+
     <div
       style={{
         display: "grid",
@@ -105,6 +131,9 @@ const Step3Optimize: React.FC<Props> = ({
           messages={messages}
           isStreaming={isStreaming}
           onSend={onSend}
+          thinkingActive={thinkingActive}
+          thinkingContent={thinkingContent}
+          thinkingMs={thinkingMs}
         />
       </Card>
 

@@ -37,6 +37,8 @@ import {
   Radio,
   Popconfirm,
   Checkbox,
+  Switch,
+  Tooltip,
 } from "antd";
 import {
   UploadOutlined,
@@ -47,6 +49,7 @@ import {
   InboxOutlined,
   DeleteOutlined,
   ReloadOutlined,
+  QuestionCircleOutlined,
 } from "@ant-design/icons";
 import {
   uploadKnowledgeApi,
@@ -64,12 +67,15 @@ import {
 import type {
   RetrievedChunk,
   TraceEvent,
+  ReasoningEntry,
   KnowledgeDocument,
   KnowledgeEntry,
   KnowledgeFileInfoResult,
 } from "@/api";
 import ReactMarkdown from "react-markdown";
 import AITracePanel from "@/components/AITracePanel";
+import ThinkingPanel from "@/components/ThinkingPanel";
+import { useThinkingPreference } from "@/hooks/useThinkingPreference";
 
 const { TextArea } = Input;
 const { Paragraph, Text } = Typography;
@@ -132,6 +138,22 @@ const KnowledgeBasePanel: React.FC = () => {
   const [askError, setAskError] = useState<string | null>(null);
   const [traceEvents, setTraceEvents] = useState<TraceEvent[]>([]);
 
+  // ========== 深度思考状态 ==========
+  /** 本次请求后端是否开启了深度思考（meta 事件下发） */
+  const [thinkingEnabled, setThinkingEnabled] = useState(false);
+  /** 是否正在思考（检索结束后点亮，思考结果到达后熄灭） */
+  const [thinkingActive, setThinkingActive] = useState(false);
+  /** 已到达的思考过程（知识库问答通常只有一段） */
+  const [reasoningEntries, setReasoningEntries] = useState<ReasoningEntry[]>([]);
+
+  /**
+   * 深度思考开关偏好。
+   *
+   * effective = 全局熔断（配置中心 switch.deep_thinking）∩ 用户本地偏好，
+   * 这才是真正下发给后端的值；后端还会再判定一次，并以 meta 事件回传结论。
+   */
+  const thinking = useThinkingPreference();
+
   // ========== 上传文件元信息（文件真相源） ==========
   const [fileInfo, setFileInfo] = useState<KnowledgeFileInfoResult | null>(null);
   const hasFile = fileInfo?.hasFile === true;
@@ -160,8 +182,22 @@ const KnowledgeBasePanel: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    loadDocuments();
-    loadFileInfo();
+    // 首次进入面板时预加载「我的知识」列表与文件元信息。
+    //
+    // 这里用 async 包裹并 await，而不是直接在 effect 体内调用：
+    // loadDocuments 的第一条语句就是 setLoadingDocs(true)，同步调用会引发
+    // 级联渲染（react-hooks/set-state-in-effect）；放进 await 之后状态更新
+    // 落在微任务里，不再阻塞本次渲染提交。cancelled 用于组件已卸载时跳过写入。
+    let cancelled = false;
+    void (async () => {
+      await loadDocuments();
+      if (cancelled) return;
+      await loadFileInfo();
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [loadDocuments, loadFileInfo]);
 
   /** 下载模板（首次引导） */
@@ -312,19 +348,54 @@ const KnowledgeBasePanel: React.FC = () => {
     setChunks([]);
     setAnswer("");
     setTraceEvents([]);
+    // 重置思考面板，避免上一轮的内容残留到这一轮
+    setThinkingEnabled(false);
+    setThinkingActive(false);
+    setReasoningEntries([]);
+
+    // 用局部变量而不是 state 记录「后端是否开启思考」：
+    // onStart 与 onRetrieve 由同一个 SSE 循环连续触发，此时 React 的 state
+    // 还没提交，读 state 会拿到旧值。
+    let thinkingOn = false;
 
     await askKnowledgeStream(question.trim(), {
-      onStart: () => {},
-      onRetrieve: (retrieved) => setChunks(retrieved),
-      onAnswer: (generated) => setAnswer(generated),
+      onStart: (meta) => {
+        thinkingOn = meta?.thinking?.enabled === true;
+        setThinkingEnabled(thinkingOn);
+      },
+      onRetrieve: (retrieved) => {
+        setChunks(retrieved);
+        // 图结构是 retrieve → generate，检索一结束就意味着模型开始推理，
+        // 此刻才点亮「思考中」，避免与「正在检索知识库…」的 loading 语义重叠
+        if (thinkingOn) setThinkingActive(true);
+      },
+      onReasoning: (payload) => {
+        // 思考结果到达：停表并累积内容（耗时以后端返回的真实值为准）
+        setReasoningEntries((prev) => [...prev, payload]);
+        setThinkingActive(false);
+      },
+      onAnswer: (generated) => {
+        // 回答开始产出说明思考阶段已经结束。这里兜底停表，
+        // 覆盖「开启了思考但模型没返回思考文本」的退化情况
+        setThinkingActive(false);
+        setAnswer(generated);
+      },
       onTrace: (events) => setTraceEvents(events),
       onDone: (result) => {
         setChunks(result.chunks);
         setAnswer(result.answer);
       },
-      onError: (message) => setAskError(message),
+      onError: (message) => {
+        setAskError(message);
+        setThinkingActive(false);
+      },
+    }, {
+      // 会话级意图：后端还会叠加全局熔断，最终以后端 meta 回传的结论为准
+      thinking: thinking.effective,
     });
 
+    // 兜底停表：正常路径已在上面停过，这里覆盖异常中断的情况
+    setThinkingActive(false);
     setAsking(false);
   };
 
@@ -727,6 +798,34 @@ const KnowledgeBasePanel: React.FC = () => {
   // ========== 渲染：智能问答 Tab ==========
   const renderAskTab = () => (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* 深度思考开关：默认关闭，用户主动开启后答案更细但耗时更长 */}
+      <Space size={6} align="center">
+        <Switch
+          size="small"
+          checked={thinking.effective}
+          disabled={!thinking.available}
+          onChange={thinking.setEnabled}
+        />
+        <Text style={{ fontSize: 13 }}>深度思考</Text>
+        <Tooltip
+          title={
+            thinking.available
+              ? "开启后模型会先推理再作答：答案更细致，但耗时更长（约 10–30 秒）。推理过程会展示在下方，可展开查看。"
+              : "管理员已在系统设置中关闭「深度思考」能力"
+          }
+        >
+          <QuestionCircleOutlined
+            style={{ color: "var(--text-secondary, #999)", cursor: "help" }}
+          />
+        </Tooltip>
+        {/* 开关处于关闭状态时给一句轻提示，避免用户以为功能坏了 */}
+        {!thinking.available && (
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            已由管理员关闭
+          </Text>
+        )}
+      </Space>
+
       <Space.Compact style={{ width: "100%" }}>
         <Input
           placeholder="就知识库内容提问，如「React 虚拟 DOM 的优势有哪些？」"
@@ -782,6 +881,13 @@ const KnowledgeBasePanel: React.FC = () => {
           <Spin tip="正在检索知识库…" />
         </div>
       )}
+
+      {/* 【深度思考】思考过程面板：检索完成后点亮，思考结果到达后可展开全文。
+          用 thinkingEnabled 兜底，保证后端未开启思考时不会出现空白思考块。 */}
+      {thinkingEnabled && (thinkingActive || reasoningEntries.length > 0) && (
+        <ThinkingPanel active={thinkingActive} entries={reasoningEntries} />
+      )}
+
       {answer && (
         <div
           style={{

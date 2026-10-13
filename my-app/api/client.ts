@@ -11,8 +11,9 @@
  * 3. 所有请求都走一层日志和错误处理
  *
  * 【Token 管理策略】
- * - 登录/注册成功后，Token 存入 localStorage
- * - 每次请求前，从 localStorage 读取 Token 并注入 Authorization 头
+ * - 默认存入 sessionStorage（每个标签页/窗口独立），支持「多窗口同时登录不同账号」互不干扰
+ * - 勾选「记住我」才存入 localStorage（持久化，关闭浏览器后仍登录）
+ * - 每次请求前，从 sessionStorage → localStorage 顺序读取 Token 并注入 Authorization 头
  * - 路由守卫检查 Token 是否存在，不存在则跳转登录页
  *
  * 【错误处理策略（响应拦截器）】
@@ -34,7 +35,7 @@ import axios, { type AxiosInstance, type AxiosError } from "axios";
 // 常量配置
 // ============================================================
 
-/** Token 在 localStorage 中的 key */
+/** Token 的存储 key（sessionStorage 与 localStorage 共用同一个 key） */
 const TOKEN_KEY = "careerai_token";
 
 /** 请求超时时间（毫秒） */
@@ -45,31 +46,67 @@ const REQUEST_TIMEOUT = 15000;
 // ============================================================
 
 /**
- * 从 localStorage 读取 Token
+ * 读取 Token。
+ *
+ * 【读取优先级】
+ * 1. sessionStorage（本标签页/窗口的会话 token，支持多账号同时登录）
+ * 2. localStorage（「记住我」持久化 token，跨会话保留）
+ *
+ * 优先 sessionStorage 的原因：当前窗口登录的账号优先级最高，
+ * 即使其它窗口用「记住我」存过 localStorage 的旧账号，也不会串味。
  *
  * 封装成函数的好处：
- * 1. 解耦存储方式（未来改 sessionStorage/cookie 只需改这里）
- * 2. 统一异常处理（JSON.parse 失败时返回 null）
+ * 1. 解耦存储方式（未来改 cookie 只需改这里）
+ * 2. 统一异常处理（隐私模式 / 存储被禁用时返回 null）
  */
 export function getToken(): string | null {
   if (typeof window === "undefined") return null;
   try {
-    return localStorage.getItem(TOKEN_KEY);
+    return sessionStorage.getItem(TOKEN_KEY) ?? localStorage.getItem(TOKEN_KEY);
   } catch {
     return null;
   }
 }
 
-/** 存储 Token 到 localStorage */
-export function setToken(token: string): void {
+/**
+ * 存储 Token。
+ *
+ * @param token    - JWT Token
+ * @param remember - 是否「记住我」：true 存 localStorage（持久化），
+ *                   false（默认）存 sessionStorage（会话级、每窗口独立）
+ *
+ * 【多账号说明】
+ * 默认（remember=false）用 sessionStorage，每个标签页/窗口一份独立 token，
+ * 因此可以同时开两个窗口分别登录 admin 和普通账号，互不覆盖。
+ *
+ * 勾选「记住我」时写入 localStorage：localStorage 是浏览器全局共享的，
+ * 两个窗口都勾选记住我会互相覆盖——这是浏览器安全模型的固有限制。
+ */
+export function setToken(token: string, remember: boolean = false): void {
   if (typeof window === "undefined") return;
-  localStorage.setItem(TOKEN_KEY, token);
+  try {
+    if (remember) {
+      localStorage.setItem(TOKEN_KEY, token);
+      // 清掉本窗口的会话 token，保证 getToken 优先读到最新的「记住我」token
+      sessionStorage.removeItem(TOKEN_KEY);
+    } else {
+      sessionStorage.setItem(TOKEN_KEY, token);
+      // 不动 localStorage：保留其它窗口「记住我」的 token，互不干扰
+    }
+  } catch {
+    // 存储不可用（隐私模式等）时静默忽略
+  }
 }
 
-/** 清除 Token（退出登录时调用） */
+/** 清除 Token（退出登录时调用，两个存储都清干净） */
 export function removeToken(): void {
   if (typeof window === "undefined") return;
-  localStorage.removeItem(TOKEN_KEY);
+  try {
+    sessionStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    // ignore
+  }
 }
 
 // ============================================================

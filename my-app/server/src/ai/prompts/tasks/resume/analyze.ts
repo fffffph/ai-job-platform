@@ -21,8 +21,12 @@ export const ANALYZE_TASK_PROMPT = `请对用户提供的简历原文进行结�
  * 构造「分析简历」节点的人类消息内容。
  *
  * @param resumeText - 规范化后的简历原文
+ * @param taskPrompt - 任务指令（可选，缺省用 ANALYZE_TASK_PROMPT；P3 参数收敛后由配置中心注入）
  * @returns 任务指令 + 简历原文拼接后的完整文本
  */
-export function buildAnalyzeMessage(resumeText: string): string {
-  return `${ANALYZE_TASK_PROMPT}\n\n【简历原文】\n${resumeText}`;
+export function buildAnalyzeMessage(
+  resumeText: string,
+  taskPrompt: string = ANALYZE_TASK_PROMPT
+): string {
+  return `${taskPrompt}\n\n【简历原文】\n${resumeText}`;
 }

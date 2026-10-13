@@ -14,6 +14,8 @@
  * - match          ：结构化匹配度结果（match_assess 节点产出，无 JD 时为 null）
  * - suggestions    ：改进建议汇总（suggest 节点产出，字符串数组）
  * - messages       ：对话消息流（P2 结构化输出不产生消息，预留用于未来多轮）
+ * - reasoning      ：该节点模型思考过程全文（未开启深度思考时为空串）
+ * - reasoningMs    ：该节点模型调用耗时毫秒（供前端展示「已思考 N 秒」）
  */
 
 import { Annotation } from "@langchain/langgraph";
@@ -42,6 +44,11 @@ export const ResumeStateAnnotation = Annotation.Root({
       current.concat(update),
     default: () => [],
   }),
+
+  // ---------- 深度思考（每个 LLM 节点各写各的，随该节点的 update 传给路由层） ----------
+  // last-value-wins：路由层在处理某个节点的 updates 时读到的是该节点刚写入的值
+  reasoning: Annotation<string>,
+  reasoningMs: Annotation<number>,
 });
 
 /** 简历分析图状态类型（由 Annotation 推导） */

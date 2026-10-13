@@ -22,14 +22,16 @@ export const MATCH_TASK_PROMPT = `请评估候选人与目标岗位的匹配度�
  *
  * @param resumeText - 规范化后的简历原文
  * @param jobDescription - 目标岗位描述（JD），已去除首尾空白
+ * @param taskPrompt - 任务指令（可选，缺省用 MATCH_TASK_PROMPT；P3 参数收敛后由配置中心注入）
  * @returns 任务指令 + JD + 简历原文拼接后的完整文本
  */
 export function buildMatchMessage(
   resumeText: string,
-  jobDescription: string
+  jobDescription: string,
+  taskPrompt: string = MATCH_TASK_PROMPT
 ): string {
   return (
-    `${MATCH_TASK_PROMPT}\n\n` +
+    `${taskPrompt}\n\n` +
     `【目标岗位描述（JD）】\n${jobDescription}\n\n` +
     `【简历原文】\n${resumeText}`
   );

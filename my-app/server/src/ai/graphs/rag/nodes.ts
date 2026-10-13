@@ -15,12 +15,14 @@
 
 import type { ChatOpenAI } from "@langchain/openai";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
+import { readReasoningContent } from "../../llm/deepseek.js";
 import type { RAGState } from "./state.js";
 import { collectTrace } from "../../trace/tracer.js";
 import {
   retrieveChunks,
   DEFAULT_TOP_K,
   type RetrievedChunk,
+  type RetrieveOptions,
 } from "../../rag/retrieval/retriever.js";
 
 /** 回答节点的系统 Prompt：要求模型只依据检索结果、并标注引用来源 */
@@ -83,17 +85,26 @@ function normalizeContent(content: unknown): string {
 /**
  * 创建检索节点（工厂函数）。
  *
- * 通过闭包注入 topK，节点内部调用 retriever 做向量检索。
+ * 通过闭包注入 topK 与检索参数，节点内部调用 retriever 做向量检索。
  *
  * @param topK - 检索条数（默认 5）
+ * @param retrieveOptions - 可选：候选召回倍数/检索词加权/超时（P3 参数收敛）
  */
-export function createRetrieveNode(topK: number = DEFAULT_TOP_K) {
+export function createRetrieveNode(
+  topK: number = DEFAULT_TOP_K,
+  retrieveOptions?: RetrieveOptions
+) {
   return async function retrieveNode(
     state: RAGState
   ): Promise<Partial<RAGState>> {
     const startedAt = Date.now();
 
-    const chunks = await retrieveChunks(state.userId, state.question, topK);
+    const chunks = await retrieveChunks(
+      state.userId,
+      state.question,
+      topK,
+      retrieveOptions
+    );
 
     const output: Partial<RAGState> = { chunks };
 
@@ -116,8 +127,12 @@ export function createRetrieveNode(topK: number = DEFAULT_TOP_K) {
  * 拼接进 prompt，要求模型在回答中标注 [1]、[2] 引用来源。
  *
  * @param llm - 由 createDeepSeekChat 创建、已指向 DeepSeek 的模型实例
+ * @param ragAnswerPrompt - 可选：回答系统 Prompt（P3 参数收敛，缺省用内置默认值）
  */
-export function createAnswerNode(llm: ChatOpenAI) {
+export function createAnswerNode(
+  llm: ChatOpenAI,
+  ragAnswerPrompt?: string
+) {
   return async function answerNode(
     state: RAGState
   ): Promise<Partial<RAGState>> {
@@ -126,27 +141,44 @@ export function createAnswerNode(llm: ChatOpenAI) {
     const context = buildContext(state.chunks);
 
     const messages = [
-      new SystemMessage(RAG_ANSWER_SYSTEM_PROMPT),
+      new SystemMessage(ragAnswerPrompt ?? RAG_ANSWER_SYSTEM_PROMPT),
       new HumanMessage(
         `【知识库检索结果】\n${context}\n\n【用户问题】\n${state.question}\n\n请回答并标注引用来源。`
       ),
     ];
 
     let answer: string;
+    // 思考链直接从返回的消息上读（见 llm/deepseek.ts 的设计复盘：
+    // bindTools / withStructuredOutput 会绕开实例方法，实例状态不可靠）
+    let reasoning = "";
+    // 模型调用耗时。注意：非流式调用下无法把「思考」与「作答」拆开计时，
+    // 因此该值是两者之和——开启思考时它基本等于思考耗时（作答占比很小）。
+    let reasoningMs = 0;
     try {
+      const callStartedAt = Date.now();
       const res = await llm.invoke(messages);
+      reasoningMs = Date.now() - callStartedAt;
+      reasoning = readReasoningContent(res);
       answer = normalizeContent(res.content);
     } catch (error) {
       const detail = (error as Error).message || "未知原因";
       throw new Error(`RAG 回答生成失败：${detail}`);
     }
 
-    const output: Partial<RAGState> = { answer };
+    // 【可观测】思考链长度是排查「开关开了但看不到内容」的第一手线索：
+    // reasoningChars 恒为 0 说明模型根本没吐思考链（参数/模型不支持），
+    // 而不是前端展示问题。
+    console.log(
+      `[AI][thinking] node=generate callMs=${reasoningMs} reasoningChars=${reasoning.length}`
+    );
+
+    const output: Partial<RAGState> = { answer, reasoning, reasoningMs };
 
     collectTrace({
       nodeName: "answer",
       input: { question: state.question, chunkCount: state.chunks.length },
-      output: { answer },
+      // 只记录思考的「规模」而非全文：思考链动辄上千字，全量落库会让 trace 表迅速膨胀
+      output: { answer, reasoningMs, reasoningChars: reasoning.length },
       durationMs: Date.now() - startedAt,
       timestamp: new Date().toISOString(),
     });

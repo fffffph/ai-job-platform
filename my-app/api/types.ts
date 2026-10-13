@@ -129,6 +129,10 @@ export enum ErrorCode {
   DEEPSEEK_KEY_NOT_CONFIGURED = "DEEPSEEK_KEY_NOT_CONFIGURED",
   /** DeepSeek API Key 格式不正确 */
   INVALID_KEY_FORMAT = "INVALID_KEY_FORMAT",
+  /** 账号已被停用（P0-11，登录/请求被拒） */
+  USER_DISABLED = "USER_DISABLED",
+  /** 权限不足（403，无权限执行此操作） */
+  FORBIDDEN = "FORBIDDEN",
 }
 
 // ========== 个人知识库（RAG）类型 ==========
@@ -253,6 +257,61 @@ export interface TraceEvent {
   timestamp: string;
 }
 
+/**
+ * 深度思考的一段推理过程（对应后端 SSE 的 reasoning 事件）。
+ *
+ * ReAct 循环里 agent 会执行多轮，因此一次请求可能产生多段思考；
+ * 前端应累积成数组展示，而不是只保留最后一段。
+ */
+export interface ReasoningEntry {
+  /** 产出该段思考的节点名（agent / finalize / generate / analyze / match_assess） */
+  nodeName?: string;
+  /** 思考过程全文 */
+  content: string;
+  /** 该轮模型调用耗时（毫秒） */
+  reasoningMs: number;
+}
+
+// ========== AI Trace 历史（P6 落库后新增） ==========
+
+/** AI 执行的图类型：简历分析 / 知识库问答 / 职位发现 */
+export type TraceRunType = "resume" | "rag" | "jobs";
+
+/** AI 执行状态 */
+export type TraceRunStatus = "success" | "error";
+
+/**
+ * 历史列表项（不含事件详情，轻量）。
+ * 对应后端 GET /api/ai/trace/runs 返回的 data 元素。
+ */
+export interface TraceRunListItem {
+  /** run 唯一 ID */
+  id: string;
+  /** 图类型：resume / rag / jobs */
+  type: string;
+  /** 执行状态：success / error */
+  status: string;
+  /** 节点数量 */
+  nodeCount: number;
+  /** 总耗时（毫秒，各节点耗时之和） */
+  totalDurationMs: number;
+  /** 执行创建时间（ISO 8601 字符串） */
+  createdAt: string;
+}
+
+/**
+ * 单次执行的完整详情（含按顺序排列的节点事件）。
+ * 对应后端 GET /api/ai/trace/runs/:id 返回的 data。
+ *
+ * 注意：events 里每个事件相比 TraceEvent 多了 id/runId/order/createdAt
+ * 等持久化字段，但前端回放只用到 TraceEvent 的 5 个字段，
+ * 结构赋值时多余字段被忽略，因此这里直接复用 TraceEvent。
+ */
+export interface TraceRunDetail extends TraceRunListItem {
+  /** 按执行顺序排列的节点事件 */
+  events: TraceEvent[];
+}
+
 /** 错误码对应的用户提示文案 */
 export const ERROR_MESSAGES: Record<string, string> = {
   [ErrorCode.EMAIL_EXISTS]: "该邮箱已被注册，请使用其他邮箱或直接登录",
@@ -263,4 +322,248 @@ export const ERROR_MESSAGES: Record<string, string> = {
   [ErrorCode.DEEPSEEK_KEY_NOT_CONFIGURED]:
     "需先在个人中心配置 DeepSeek API Key 才能使用 AI 简历优化",
   [ErrorCode.INVALID_KEY_FORMAT]: "API Key 格式不正确，请检查后重试",
+  [ErrorCode.USER_DISABLED]: "账号已被停用，请联系管理员",
+  [ErrorCode.FORBIDDEN]: "无权限执行此操作",
 };
+
+// ========== 系统配置（配置中心）类型 ==========
+
+/** 配置值类型（与后端 config/schema.ts 对齐） */
+export type ConfigType =
+  | "string"
+  | "textarea"
+  | "number"
+  | "boolean"
+  | "json"
+  | "json-array"
+  | "file";
+
+/** 配置分组（与后端对齐，custom 为管理员新增的「自定义」动态配置组） */
+export type ConfigGroup =
+  | "prompt"
+  | "llm"
+  | "rag"
+  | "jobs"
+  | "switch"
+  | "custom";
+
+/** string 类型的下拉选项 */
+export interface ConfigEnumOption {
+  value: string;
+  label: string;
+}
+
+/**
+ * 单个配置项的有效状态（对应后端 GET /api/config 返回的 data 元素）。
+ *
+ * 后端「三级回退」后给出最终 value + 是否被覆盖 + 是否启用，
+ * 并透传 min/max/enum/jsonSchema 等元数据，供前端 schema 驱动渲染控件。
+ */
+export interface EffectiveConfigItem {
+  /** 唯一键，如 "prompt.resume_expert" */
+  key: string;
+  /** 值类型，决定前端控件 */
+  type: ConfigType;
+  /** 中文名 */
+  label: string;
+  /** 说明文字 */
+  description?: string;
+  /** 分组 */
+  group: ConfigGroup;
+  /** 内置默认值 */
+  defaultValue: unknown;
+  /** 是否启用（元开关） */
+  enabled: boolean;
+  /** 有效值（回退后的最终值） */
+  value: unknown;
+  /** 是否已被覆盖（DB 存在覆盖值） */
+  overridden: boolean;
+  /** number 类型：最小值 */
+  min?: number;
+  /** number 类型：最大值 */
+  max?: number;
+  /** string 类型：可选下拉选项 */
+  enum?: ConfigEnumOption[];
+  /** json / json-array 类型：结构说明 */
+  jsonSchema?: string;
+}
+
+/** 批量保存配置的单项（PUT /api/config 请求体 items 元素） */
+export interface SaveConfigItem {
+  key: string;
+  value: unknown;
+  enabled?: boolean;
+}
+
+/** 新增动态配置的请求参数（POST /api/config） */
+export interface CreateConfigParams {
+  /** 配置键（全小写、点分、见名知意，如 "feature.my_flag"，须全局唯一） */
+  key: string;
+  /** 值类型（决定前端控件与后端校验） */
+  type: ConfigType;
+  /** 配置值 */
+  value: unknown;
+  /** 中文名（见名知意展示用） */
+  label?: string;
+  /** 说明文字 */
+  description?: string;
+  /** 是否启用（默认 true） */
+  enabled?: boolean;
+}
+
+/** 当前用户角色查询结果（GET /api/user/roles） */
+export interface UserRolesResult {
+  /** 角色代码数组，如 ["admin"] / ["user"] */
+  roles: string[];
+}
+
+// ========== RBAC 权限体系：菜单 / 角色 / 用户管理 类型 ==========
+
+/** 菜单节点类型：catalog（目录）| menu（菜单）| button（按钮） */
+export type MenuType = "catalog" | "menu" | "button";
+
+/** 启用状态 */
+export type MenuStatus = "active" | "disabled";
+
+/** 账号状态 */
+export type UserStatus = "active" | "disabled";
+
+/**
+ * 菜单树节点（GET /api/menu/my 返回）。
+ *
+ * 后端按 sort 升序、剔除 button，catalog/menu 两级（或按实际层级）。
+ */
+export interface MenuTreeNode {
+  /** 菜单 id */
+  id: string;
+  /** 权限码 / 唯一标识 */
+  code: string;
+  /** 菜单名称 */
+  name: string;
+  /** 路由路径（catalog 为 null） */
+  path: string | null;
+  /** 图标名（前端映射到图标组件，可为 null） */
+  icon: string | null;
+  /** 同级排序值 */
+  sort: number;
+  /** 子菜单 */
+  children?: MenuTreeNode[];
+}
+
+/** 当前用户菜单结果（GET /api/menu/my） */
+export interface MyMenuResult {
+  /** 侧边栏菜单树 */
+  menus: MenuTreeNode[];
+  /** 用户全部权限码 */
+  permissions: string[];
+}
+
+/**
+ * 菜单项（GET /api/menu/tree 返回的平铺行）。
+ *
+ * 平铺数组 + parentId，前端自行组装 treeData（主理人拍板 A1）。
+ */
+export interface MenuItem {
+  id: string;
+  parentId: string | null;
+  type: MenuType;
+  code: string;
+  name: string;
+  path: string | null;
+  component: string | null;
+  icon: string | null;
+  sort: number;
+  visible: boolean;
+  status: MenuStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 新增菜单入参（POST /api/menu） */
+export interface CreateMenuParams {
+  parentId: string | null;
+  type: MenuType;
+  code: string;
+  name: string;
+  path?: string | null;
+  component?: string | null;
+  icon?: string | null;
+  sort?: number;
+  visible?: boolean;
+  status?: MenuStatus;
+}
+
+/** 编辑菜单入参（PUT /api/menu/:id，code 不可修改） */
+export type UpdateMenuParams = Partial<CreateMenuParams>;
+
+/** 角色列表项（GET /api/role/list） */
+export interface RoleItem {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  /** 是否系统内置角色（admin/user=true，不可删除） */
+  isSystem: boolean;
+  /** 关联用户数 */
+  userCount: number;
+  /** 绑定菜单数；admin 为 null（全部权限） */
+  menuCount: number | null;
+}
+
+/** 角色已绑定菜单结果（GET /api/role/:id/menus） */
+export interface RoleMenuResult {
+  menuIds: string[];
+}
+
+/** 新增角色入参 */
+export interface CreateRoleParams {
+  code: string;
+  name: string;
+  description?: string;
+}
+
+/** 编辑角色入参（code 不可修改） */
+export interface UpdateRoleParams {
+  name?: string;
+  description?: string;
+}
+
+/** 保存角色菜单绑定入参（PUT /api/role/:id/menus） */
+export interface SetRoleMenusParams {
+  menuIds: string[];
+}
+
+/** 管理侧用户列表项（GET /api/user/list） */
+export interface AdminUserItem {
+  id: string;
+  email: string;
+  name: string | null;
+  roles: { id: string; code: string; name: string }[];
+  status: UserStatus;
+  createdAt: string;
+}
+
+/** 用户列表结果（GET /api/user/list） */
+export interface UserListResult {
+  items: AdminUserItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+/** 用户列表查询参数 */
+export interface UserListQuery {
+  keyword?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+/** 分配角色入参（PUT /api/user/:id/roles） */
+export interface AssignRolesParams {
+  roleIds: string[];
+}
+
+/** 设置账号状态入参（PUT /api/user/:id/status） */
+export interface SetUserStatusParams {
+  status: UserStatus;
+}

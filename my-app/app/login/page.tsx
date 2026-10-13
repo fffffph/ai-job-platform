@@ -36,7 +36,7 @@ const LoginContent = () => {
    * 3. 成功 → 存 Token → 跳转 Dashboard
    * 4. 失败 → 显示错误信息
    */
-  const onFinish = async (values: { email: string; password: string }) => {
+  const onFinish = async (values: { email: string; password: string; remember?: boolean; }) => {
     setLoading(true);
 
     // 调用真实后端登录接口
@@ -46,8 +46,8 @@ const LoginContent = () => {
     });
 
     if (res.success) {
-      // 登录成功：存储 Token 到本地
-      setToken(res.data.token);
+      // 登录成功：存储 Token 到本地（勾选「记住我」才持久化，否则会话级）
+      setToken(res.data.token, values.remember);
       message.success(`登录成功！欢迎回来，${res.data.user.name || values.email}`);
       router.push("/dashboard");
     } else {
