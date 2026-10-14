@@ -389,3 +389,40 @@ export function searchJobs(
     2
   );
 }
+
+/**
+ * 真实数据源搜索（预留实现，P5 开关 switch.mock_jobs=false 时走此分支）。
+ *
+ * 【当前状态】
+ * 真实抓取 Boss直聘/拉勾/猎聘涉及反爬（登录态、验证码、IP 封禁）与
+ * 平台 ToS 合规风险，尚未接入。当管理员在「系统设置」关闭「职位模拟数据」
+ * 开关后，搜索走此 stub，返回空结果并明确告知「真实数据源尚未接入」，
+ * 让 Agent 据此如实反馈用户，而不是继续返回模拟数据。
+ *
+ * 【接入方式（将来）】
+ * 在此函数内替换为真实数据源客户端（如已授权的招聘 API / 内部职位库），
+ * 保持函数签名与 searchJobs 一致（keywords/city/source/limit → JSON 字符串），
+ * 上游 search_jobs 工具与图无需改动。
+ *
+ * @param _keywords - 搜索关键词（预留）
+ * @param _city     - 城市过滤（预留）
+ * @param _source   - 数据来源（预留）
+ * @param _limit    - 最多返回条数（预留）
+ * @returns 空结果 JSON（说明真实数据源未接入）
+ */
+export function searchRealJobs(
+  _keywords: string,
+  _city?: string,
+  _source?: string,
+  _limit = 10
+): string {
+  return JSON.stringify(
+    {
+      count: 0,
+      jobs: [],
+      notice: "真实职位数据源尚未接入，当前无法返回职位。请联系管理员开启「职位模拟数据」或等待真实数据源上线。",
+    },
+    null,
+    2
+  );
+}

@@ -21,7 +21,30 @@ export {
   saveSiliconFlowKey,
   deleteSiliconFlowKey,
   testSiliconFlowKey,
+  getMyRoles,
+  getUserListApi,
+  assignUserRolesApi,
+  setUserStatusApi,
 } from "./modules/user";
+
+// 菜单模块（RBAC 权限体系）
+export {
+  getMyMenuApi,
+  getMenuTreeApi,
+  createMenuApi,
+  updateMenuApi,
+  deleteMenuApi,
+} from "./modules/menu";
+
+// 角色模块（RBAC 权限体系）
+export {
+  getRoleListApi,
+  createRoleApi,
+  updateRoleApi,
+  deleteRoleApi,
+  getRoleMenusApi,
+  setRoleMenusApi,
+} from "./modules/role";
 
 // 个人知识库模块（RAG）
 export {
@@ -39,6 +62,8 @@ export {
 } from "./modules/knowledge";
 export type {
   KnowledgeAskHandlers,
+  KnowledgeAskMeta,
+  AskKnowledgeOptions,
   DownloadResult,
   ParseTextResult,
   KnowledgeFileInfoResult,
@@ -46,10 +71,28 @@ export type {
 
 // 职位发现模块（ReAct Agent）
 export { recommendJobsStream } from "./modules/jobs";
-export type { JobIntent, JobRecommendHandlers } from "./modules/jobs";
+export type {
+  JobIntent,
+  JobRecommendHandlers,
+  JobRecommendMeta,
+  RecommendJobsOptions,
+} from "./modules/jobs";
 
 // 求职画像模块（P5 Memory）
 export { getJobProfileApi, saveJobProfileApi } from "./modules/jobs";
+
+// AI Trace 历史模块（P6 落库后新增）
+export { listTraceRunsApi, getTraceRunApi } from "./modules/trace";
+
+// 系统配置模块（配置中心 P2/P4）
+export {
+  getConfigsApi,
+  createConfigApi,
+  saveConfigsApi,
+  saveConfigOneApi,
+  resetConfigOneApi,
+  resetAllConfigsApi,
+} from "./modules/config";
 
 // Token 工具函数
 export { getToken, setToken, removeToken } from "./client";
@@ -59,6 +102,7 @@ export type {
   ApiResponse,
   ApiSuccessResponse,
   ApiErrorResponse,
+  ReasoningEntry,
   AuthResult,
   UserProfile,
   UpdateProfileParams,
@@ -79,6 +123,33 @@ export type {
   JobRecommendation,
   JobRecommendationItem,
   TraceEvent,
+  TraceRunListItem,
+  TraceRunDetail,
+  ConfigType,
+  ConfigGroup,
+  ConfigEnumOption,
+  EffectiveConfigItem,
+  SaveConfigItem,
+  CreateConfigParams,
+  UserRolesResult,
+  MenuType,
+  MenuStatus,
+  UserStatus,
+  MenuTreeNode,
+  MyMenuResult,
+  MenuItem,
+  CreateMenuParams,
+  UpdateMenuParams,
+  RoleItem,
+  RoleMenuResult,
+  CreateRoleParams,
+  UpdateRoleParams,
+  SetRoleMenusParams,
+  AdminUserItem,
+  UserListResult,
+  UserListQuery,
+  AssignRolesParams,
+  SetUserStatusParams,
 } from "./types";
 
 // 枚举和常量导出

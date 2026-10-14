@@ -9,3 +9,8 @@
 
 # 若改用 bind mount 持久化数据库，取消下面注释
 # pgdata/
+
+
+.workbuddy
+
+.trae

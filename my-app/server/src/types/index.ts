@@ -107,3 +107,109 @@ export interface ChangePasswordRequest {
   /** 新密码 */
   newPassword: string;
 }
+
+// ========== RBAC 权限体系：菜单 / 角色 / 用户管理 共享类型 ==========
+
+/** 菜单节点类型：catalog（目录）| menu（菜单）| button（按钮） */
+export type MenuType = "catalog" | "menu" | "button";
+
+/** 菜单/角色启用状态 */
+export type MenuStatus = "active" | "disabled";
+
+/** 用户账号状态 */
+export type UserStatus = "active" | "disabled";
+
+/**
+ * 菜单树节点（接口返回给前端的结构）。
+ *
+ * 用于 GET /api/menu/my：catalog + menu 两级（或按实际层级），
+ * 已按 sort 升序，不含 button；path/icon 为空时前端做兜底。
+ */
+export interface MenuTreeNode {
+  /** 菜单 id */
+  id: string;
+  /** 权限码 / 唯一标识 */
+  code: string;
+  /** 菜单名称（中文） */
+  name: string;
+  /** 路由路径（catalog 为 null） */
+  path: string | null;
+  /** 图标名（前端映射到图标组件，可为 null） */
+  icon: string | null;
+  /** 同级排序值（升序） */
+  sort: number;
+  /** 子菜单 */
+  children?: MenuTreeNode[];
+}
+
+/**
+ * 新增菜单入参（POST /api/menu）。
+ */
+export interface CreateMenuInput {
+  /** 父级菜单 id，null 表示顶级 */
+  parentId: string | null;
+  /** 节点类型 */
+  type: MenuType;
+  /** 权限码（唯一，需符合命名规范） */
+  code: string;
+  /** 菜单名称 */
+  name: string;
+  /** 路由路径（button 忽略） */
+  path?: string | null;
+  /** 组件/子应用标识（预留，可选） */
+  component?: string | null;
+  /** 图标名（button 忽略） */
+  icon?: string | null;
+  /** 排序值 */
+  sort?: number;
+  /** 是否显示在侧边栏（button 忽略） */
+  visible?: boolean;
+  /** 启用状态 */
+  status?: MenuStatus;
+}
+
+/**
+ * 编辑菜单入参（PUT /api/menu/:id）。
+ *
+ * 【注意】依据主理人拍板 A2：菜单 code 创建后不可修改，
+ * 若请求携带与现有值不同的 code，服务层将拒绝并返回 400。
+ */
+export type UpdateMenuInput = Partial<CreateMenuInput>;
+
+/**
+ * 角色列表项（GET /api/role/list）。
+ */
+export interface RoleListItem {
+  /** 角色 id */
+  id: string;
+  /** 角色代码 */
+  code: string;
+  /** 角色名称 */
+  name: string;
+  /** 角色描述 */
+  description: string | null;
+  /** 是否系统内置角色（admin/user=true，不可删除） */
+  isSystem: boolean;
+  /** 关联用户数 */
+  userCount: number;
+  /** 绑定菜单数；admin 为 null（表示"全部权限"） */
+  menuCount: number | null;
+}
+
+/**
+ * 管理侧用户列表项（GET /api/user/list）。
+ */
+export interface AdminUserItem {
+  /** 用户 id */
+  id: string;
+  /** 邮箱 */
+  email: string;
+  /** 昵称（可空） */
+  name: string | null;
+  /** 该用户的角色列表 */
+  roles: { id: string; code: string; name: string }[];
+  /** 账号状态 */
+  status: UserStatus;
+  /** 注册时间（ISO 字符串） */
+  createdAt: string;
+}

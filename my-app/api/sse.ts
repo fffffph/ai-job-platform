@@ -25,7 +25,11 @@
 
 /** 一条已解析的 SSE 事件 */
 export interface SSEEvent {
-  /** 事件类型，如 token / node / trace / done / error / meta / progress */
+  /**
+   * 事件类型：
+   * token / node / trace / done / error / meta / progress / reasoning
+   * （reasoning 为模型深度思考过程，见 server/src/routes/ai.routes.ts）
+   */
   event: string;
   /** 事件负载（JSON 字符串，调用方自行 JSON.parse） */
   data: string;

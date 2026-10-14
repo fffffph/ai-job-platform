@@ -21,10 +21,24 @@
 
 import { randomUUID } from "node:crypto";
 import prisma from "../../../lib/prisma.js";
-import { chunkText } from "./chunker.js";
+import { chunkText, type ChunkOptions } from "./chunker.js";
 import { embedTexts } from "../../llm/embedding.js";
 import { getDecryptedSiliconflowKey } from "../../../services/siliconflowKey.service.js";
 import type { KnowledgeEntry } from "./excel-parser.js";
+
+/**
+ * 入库可选参数（P3 参数收敛：由配置中心注入）。
+ *
+ * 所有字段均可选，缺省时回退到 chunker/embedding 内置默认值。
+ */
+export interface IngestOptions {
+  /** 分块大小（默认 512，配置项 rag.chunk_size） */
+  chunkSize?: number;
+  /** 分块重叠（默认 128，配置项 rag.chunk_overlap） */
+  chunkOverlap?: number;
+  /** 向量化接口超时毫秒（默认 60000，配置项 rag.embedding_timeout_ms） */
+  embeddingTimeoutMs?: number;
+}
 
 /** 单条入库结果 */
 export interface IngestResult {
@@ -51,6 +65,7 @@ export interface IngestEntriesResult {
  * @param keywords - 检索词（逗号分隔，可空）
  * @param category - 分类（可空）
  * @param apiKey - 已解密的 SiliconFlow Key
+ * @param options - 可选参数（分块大小/重叠/超时），缺省走内置默认值
  */
 async function ingestOne(
   userId: string,
@@ -58,10 +73,15 @@ async function ingestOne(
   content: string,
   keywords: string | undefined,
   category: string | undefined,
-  apiKey: string
+  apiKey: string,
+  options?: IngestOptions
 ): Promise<IngestResult> {
   const documentId = randomUUID();
-  const chunks = chunkText(content);
+  const chunkOptions: ChunkOptions = {
+    chunkSize: options?.chunkSize,
+    chunkOverlap: options?.chunkOverlap,
+  };
+  const chunks = chunkText(content, chunkOptions);
 
   // 无块可切（内容全是空白等极端情况）：仍写文档（保留原文），chunkCount 记 0
   if (chunks.length === 0) {
@@ -73,7 +93,9 @@ async function ingestOne(
   }
 
   // 向量化提前到写库之前：embedding 失败则直接抛错，documents 不写，避免脏数据
-  const embeddings = await embedTexts(chunks, apiKey);
+  const embeddings = await embedTexts(chunks, apiKey, {
+    timeoutMs: options?.embeddingTimeoutMs,
+  });
 
   await prisma.$queryRaw`
     INSERT INTO documents (id, user_id, title, content, keywords, category, created_at)
@@ -101,6 +123,7 @@ async function ingestOne(
  * @param content - 文档全文
  * @param keywords - 检索词（可选）
  * @param category - 分类（可选）
+ * @param options - 可选参数（分块大小/重叠/超时），缺省走内置默认值
  * @throws 标题/内容为空、embedding 失败、DB 写入失败时抛出中文错误
  */
 export async function ingestDocument(
@@ -108,7 +131,8 @@ export async function ingestDocument(
   title: string,
   content: string,
   keywords?: string,
-  category?: string
+  category?: string,
+  options?: IngestOptions
 ): Promise<IngestResult> {
   const trimmedTitle = title.trim();
   const trimmedContent = content.trim();
@@ -130,7 +154,8 @@ export async function ingestDocument(
     trimmedContent,
     keywords?.trim() || undefined,
     category?.trim() || undefined,
-    apiKey
+    apiKey,
+    options
   );
 }
 
@@ -140,13 +165,15 @@ export async function ingestDocument(
  * @param userId - 当前用户 ID
  * @param entries - 已通过校验的结构化条目数组
  * @param mode - replace（默认，清空旧知识后全量重建）/ append（只追加，不动旧的）
+ * @param options - 可选参数（分块大小/重叠/超时），缺省走内置默认值
  * @returns 入库的条目数 + 总分块数
  * @throws 无条目、embedding 失败、DB 写入失败时抛出中文错误
  */
 export async function ingestEntries(
   userId: string,
   entries: KnowledgeEntry[],
-  mode: "replace" | "append" = "replace"
+  mode: "replace" | "append" = "replace",
+  options?: IngestOptions
 ): Promise<IngestEntriesResult> {
   if (!userId) {
     throw new Error("用户 ID 不能为空");
@@ -171,7 +198,8 @@ export async function ingestEntries(
       entry.content,
       entry.keywords,
       entry.category,
-      apiKey
+      apiKey,
+      options
     );
     chunkCount += result.chunkCount;
   }

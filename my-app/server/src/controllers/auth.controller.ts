@@ -138,6 +138,7 @@ export async function register(
  * 【失败响应】
  * 400 Bad Request — 参数校验不通过
  * 401 Unauthorized — 邮箱或密码错误
+ * 403 Forbidden    — 账号已被停用（code: USER_DISABLED）
  */
 export async function login(
   req: Request,
@@ -168,6 +169,15 @@ export async function login(
     });
   } catch (error: any) {
     // ---------- 错误处理 ----------
+    // 账号已被停用 → 返回 403 Forbidden（P0-11，前端据此提示"请联系管理员"）
+    if (error.message?.includes("账号已被停用")) {
+      res.status(403).json({
+        success: false,
+        message: error.message,
+        code: "USER_DISABLED",
+      });
+      return;
+    }
     // "邮箱或密码错误" → 返回 401 Unauthorized
     if (error.message?.includes("邮箱或密码错误")) {
       res.status(401).json({

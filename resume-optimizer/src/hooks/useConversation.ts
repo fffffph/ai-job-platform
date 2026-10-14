@@ -15,12 +15,13 @@
 
 import { useState, useCallback, useRef } from "react";
 import {
-  optimizeResumeApi,
-  chatResumeApi,
+  optimizeResumeStream,
+  chatResumeStream,
   parseResumeApi,
   getDeepSeekKeyStatusApi,
   analyzeResumeMatch,
 } from "../api";
+import { useThinkingPreference } from "./useThinkingPreference";
 import type {
   OptimizeResult,
   ChatResult,
@@ -68,11 +69,34 @@ interface ConversationState {
   error: string | null;
   /** 是否因未配置 DeepSeek API Key 而被拦截（用于展示"去配置"入口） */
   needApiKey: boolean;
+  // ---------- 深度思考（逐字流式） ----------
+  /**
+   * 当前这一轮是否正在思考。
+   *
+   * 首轮优化与对话修改共用这三个字段作为「进行中」的载体：
+   * 每次发起请求都会重置，流结束时置 false。
+   */
+  thinkingActive: boolean;
+  /** 当前这一轮已到达的思考过程全文（增量累积） */
+  thinkingContent: string;
+  /** 当前这一轮思考耗时（毫秒） */
+  thinkingMs: number;
+  /**
+   * 首轮优化的思考过程快照。
+   *
+   * 单独存一份的原因：上面的 thinking* 字段是「当前轮」的临时载体，
+   * 一进入对话就会被下一轮覆盖；而首轮优化的思考需要留在 Step3 供用户回看。
+   * 对话轮次的思考则跟着 assistant 消息走（见 ChatMessage.reasoning）。
+   */
+  optimizeThinking: { content: string; ms: number };
 }
 
 // ========== Hook ==========
 
 export function useConversation() {
+  /** 深度思考偏好（全局熔断 ∩ 本地偏好），effective 为实际下发值 */
+  const thinking = useThinkingPreference();
+
   const [state, setState] = useState<ConversationState>({
     step: 1,
     file: null,
@@ -93,6 +117,10 @@ export function useConversation() {
     isStreaming: false,
     error: null,
     needApiKey: false,
+    thinkingActive: false,
+    thinkingContent: "",
+    thinkingMs: 0,
+    optimizeThinking: { content: "", ms: 0 },
   });
 
   // ========== 步骤导航 ==========
@@ -134,7 +162,27 @@ export function useConversation() {
     const controller = new AbortController();
     abortRef.current = controller;
 
-    setState((s) => ({ ...s, step: 2, isOptimizing: true, error: null, needApiKey: false }));
+    setState((s) => ({
+      ...s,
+      step: 2,
+      isOptimizing: true,
+      error: null,
+      needApiKey: false,
+      // 重置思考面板，避免上一轮内容残留到这一轮
+      thinkingActive: false,
+      thinkingContent: "",
+      thinkingMs: 0,
+    }));
+
+    // 本轮思考起点：完成后用它算出「已深度思考 N 秒」
+    const thinkingStartedAt = Date.now();
+    /**
+     * 本轮思考全文的**局部**累积变量。
+     *
+     * 不能读 state.thinkingContent：闭包捕获的是本次调用创建时的快照，
+     * 整个流跑完它都还是空串。局部变量才是这一轮真实累积的结果。
+     */
+    let optimizeReasoning = "";
 
     try {
       // 入口拦截：未配置 DeepSeek API Key 时不发起 AI 请求，直接提示并引导配置
@@ -178,24 +226,57 @@ export function useConversation() {
         ? analyzeResumeMatch(textToOptimize, jobDescription.trim())
         : Promise.resolve(null);
 
-      // 调用 AI 优化
-      const optRes = await optimizeResumeApi({ text: textToOptimize });
+      // 调用 AI 优化（SSE 流式）：思考过程逐字回调，结构化结果在 done 事件里。
+      // 用 Promise 把「回调式流」收敛成「一次性结果」，便于沿用下面的同步流程。
+      const data = await new Promise<OptimizeResult | null>((resolve) => {
+        optimizeResumeStream(
+          textToOptimize,
+          {
+            onStart: (meta) => {
+              // 以后端判定为准（它已叠加全局熔断开关），避免前后端判断不一致
+              const on = meta?.thinking?.enabled === true;
+              setState((s) => ({ ...s, thinkingActive: on }));
+            },
+            onReasoningDelta: (delta) => {
+              // 增量追加 —— 这就是「逐字流式」的落点
+              optimizeReasoning += delta;
+              setState((s) => ({
+                ...s,
+                thinkingContent: s.thinkingContent + delta,
+              }));
+            },
+            onDone: (result) => resolve(result),
+            onError: (message, code) => {
+              setState((s) => ({
+                ...s,
+                error: message,
+                // 后端兜底拦截：未配置 Key 时置 needApiKey，引导去配置
+                needApiKey: code === "DEEPSEEK_KEY_NOT_CONFIGURED",
+                isOptimizing: false,
+                thinkingActive: false,
+              }));
+              resolve(null);
+            },
+          },
+          { thinking: thinking.effective, signal: controller.signal }
+        ).then(() => {
+          // 流正常结束却没收到 done（极端情况）→ 兜底解除等待。
+          // Promise 的 resolve 幂等，重复调用无副作用。
+          resolve(null);
+        });
+      });
+
       if (controller.signal.aborted) return;
-      if (!optRes.success) {
-        setState((s) => ({
-          ...s,
-          error: optRes.message,
-          // 后端兜底拦截：未配置 Key 时置 needApiKey，引导去配置
-          needApiKey: optRes.code === "DEEPSEEK_KEY_NOT_CONFIGURED",
-          isOptimizing: false,
-        }));
+      if (!data) {
+        // 错误已由 onError 写入 state（或用户主动取消），这里只负责收尾
+        setState((s) => ({ ...s, isOptimizing: false, thinkingActive: false }));
         return;
       }
 
-      const data: OptimizeResult = optRes.data;
-
       // 等待匹配度评估完成（若未填 JD，matchPromise 已 resolve 为 null）
       const matchResult = await matchPromise;
+      // 本轮思考总耗时（用于完成后展示「已深度思考 N 秒」）
+      const thinkingMs = Date.now() - thinkingStartedAt;
 
       const v0: ResumeVersion = {
         id: "v0",
@@ -233,6 +314,10 @@ export function useConversation() {
         ],
         changes: [],
         isOptimizing: false,
+        // 思考结束：停表。同时存一份快照，Step3 里仍可回看这次优化的思考过程
+        thinkingActive: false,
+        thinkingMs,
+        optimizeThinking: { content: optimizeReasoning, ms: thinkingMs },
       }));
     } catch (err: any) {
       // 静默错误（用户取消/导航离开）不显示给用户
@@ -241,9 +326,10 @@ export function useConversation() {
         ...s,
         error: err?.message || "优化失败",
         isOptimizing: false,
+        thinkingActive: false,
       }));
     }
-  }, [state.file, state.resumeText, state.jobDescription]);
+  }, [state.file, state.resumeText, state.jobDescription, thinking.effective]);
 
   // ========== 步骤 3：对话式迭代 ==========
 
@@ -256,59 +342,111 @@ export function useConversation() {
         ...s,
         messages: [...s.messages, userMsg],
         isStreaming: true,
+        // 重置本轮思考：多轮对话里每一轮各有自己的思考链
+        thinkingActive: false,
+        thinkingContent: "",
+        thinkingMs: 0,
       }));
 
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      // 局部累积本轮思考（同 startOptimize：不能读闭包里的 state）
+      let roundReasoning = "";
+      let roundStartedAt = Date.now();
+
       try {
-        const res = await chatResumeApi({
-          resume: state.currentResume,
-          message: text,
-          history: state.messages,
-          context: sectionContext,
+        // 用 Promise 把「回调式流」收敛成一次性结果，便于沿用下面的同步流程
+        const data = await new Promise<ChatResult | null>((resolve) => {
+          chatResumeStream(
+            {
+              resume: state.currentResume,
+              message: text,
+              history: state.messages,
+              context: sectionContext,
+            },
+            {
+              onStart: (meta) => {
+                roundStartedAt = Date.now();
+                // 以后端判定为准（它已叠加全局熔断开关）
+                const on = meta?.thinking?.enabled === true;
+                setState((s) => ({ ...s, thinkingActive: on }));
+              },
+              onReasoningDelta: (delta) => {
+                roundReasoning += delta;
+                setState((s) => ({
+                  ...s,
+                  thinkingContent: s.thinkingContent + delta,
+                }));
+              },
+              onDone: (result) => resolve(result),
+              onError: (message, code) => {
+                setState((s) => ({
+                  ...s,
+                  isStreaming: false,
+                  error: message,
+                  needApiKey: code === "DEEPSEEK_KEY_NOT_CONFIGURED",
+                  thinkingActive: false,
+                }));
+                resolve(null);
+              },
+            },
+            { thinking: thinking.effective, signal: controller.signal }
+          ).then(() => resolve(null));
         });
 
-        if (!res.success) {
-          setState((s) => ({
-            ...s,
-            isStreaming: false,
-            error: res.message,
-            needApiKey: res.code === "DEEPSEEK_KEY_NOT_CONFIGURED",
-          }));
+        if (controller.signal.aborted) return;
+        if (!data) {
+          // 错误已由 onError 写入 state（或用户主动取消），这里只负责收尾
+          setState((s) => ({ ...s, isStreaming: false, thinkingActive: false }));
           return;
         }
 
-        const data: ChatResult = res.data;
+        const previousLength = state.versions.length;
+        const roundThinkingMs = roundReasoning
+          ? Date.now() - roundStartedAt
+          : 0;
+
         const newVersion: ResumeVersion = {
-          id: `v${state.versions.length}`,
-          index: state.versions.length,
+          id: `v${previousLength}`,
+          index: previousLength,
           resume: data.optimized,
           changes: data.changes,
-          label: `第 ${state.versions.length} 轮修改`,
+          label: `第 ${previousLength} 轮修改`,
           timestamp: Date.now(),
         };
 
         const assistantMsg: ChatMessage = {
           role: "assistant",
           content: data.reply || "已修改",
+          // 本轮思考跟着助手消息走，用户回看历史时不会张冠李戴
+          ...(roundReasoning
+            ? { reasoning: roundReasoning, reasoningMs: roundThinkingMs }
+            : {}),
         };
 
         setState((s) => ({
           ...s,
           currentResume: data.optimized,
           versions: [...s.versions, newVersion],
-          currentVersionIndex: state.versions.length,
+          currentVersionIndex: previousLength,
           messages: [...s.messages, assistantMsg],
           changes: data.changes,
           isStreaming: false,
+          thinkingActive: false,
+          thinkingMs: roundThinkingMs,
         }));
       } catch (err: any) {
         setState((s) => ({
           ...s,
           isStreaming: false,
+          thinkingActive: false,
           error: err?.message || "对话请求失败",
         }));
       }
     },
-    [state.currentResume, state.messages, state.versions]
+    [state.currentResume, state.messages, state.versions, thinking.effective]
   );
 
   // ========== 版本回退 ==========
@@ -360,11 +498,17 @@ export function useConversation() {
       isStreaming: false,
       error: null,
       needApiKey: false,
+      thinkingActive: false,
+      thinkingContent: "",
+      thinkingMs: 0,
+      optimizeThinking: { content: "", ms: 0 },
     });
   }, []);
 
   return {
     ...state,
+    /** 深度思考偏好：开关 UI 与下发值都用它 */
+    thinking,
     goToStep,
     handleFileUpload,
     handleTextInput,

@@ -34,6 +34,7 @@
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import prisma from "../lib/prisma.js";
+import { ROLE_CODES } from "../middleware/rbac.js";
 import type {
   RegisterRequest,
   LoginRequest,
@@ -91,14 +92,28 @@ export async function register(
     BCRYPT_SALT_ROUNDS
   );
 
-  // ---------- 步骤 3：创建用户 ----------
-  const user = await prisma.user.create({
-    data: {
-      email: data.email,
-      // ⚠️ 存入数据库的是 bcrypt 哈希值，不是原始密码！
-      password: hashedPassword,
-      name: data.name || null,
-    },
+  // ---------- 步骤 3：创建用户并绑定默认角色 ----------
+  // 依据决策 D5：新注册用户自动绑定 user 角色，否则登录后侧边栏为空。
+  // 用事务保证「创建用户 + 绑定角色」原子性：任一步失败则整体回滚，不产生无角色用户。
+  const user = await prisma.$transaction(async (tx) => {
+    const created = await tx.user.create({
+      data: {
+        email: data.email,
+        // ⚠️ 存入数据库的是 bcrypt 哈希值，不是原始密码！
+        password: hashedPassword,
+        name: data.name || null,
+      },
+    });
+
+    // 查找默认 user 角色（由 seed-roles 预置）；存在才绑定，避免因缺种子导致注册失败
+    const defaultRole = await tx.role.findUnique({ where: { code: ROLE_CODES.USER } });
+    if (defaultRole) {
+      await tx.userRole.create({
+        data: { userId: created.id, roleId: defaultRole.id },
+      });
+    }
+
+    return created;
   });
 
   // ---------- 步骤 4：生成 JWT Token ----------
@@ -163,6 +178,13 @@ export async function login(
   // 密码不匹配：统一抛出模糊错误信息
   if (!isPasswordValid) {
     throw new Error("邮箱或密码错误");
+  }
+
+  // ---------- 步骤 2.5：账号停用拦截（P0-11） ----------
+  // 依据决策 D6：停用用户即使密码正确也拒绝登录，给出明确文案
+  // （与"邮箱或密码错误"区分，便于前端提示"请联系管理员"）。
+  if (user.status === "disabled") {
+    throw new Error("账号已被停用，请联系管理员");
   }
 
   // ---------- 步骤 3：生成 JWT Token ----------

@@ -20,6 +20,16 @@
 /** 请求超时（毫秒） */
 const EMBEDDING_TIMEOUT_MS = 60_000;
 
+/**
+ * embedTexts 的可选参数（P3 参数收敛：由配置中心注入）。
+ *
+ * 所有字段均可选，缺省时回退到本文件顶部的内置默认值。
+ */
+export interface EmbeddingOptions {
+  /** 请求超时毫秒（默认 60000，配置项 rag.embedding_timeout_ms） */
+  timeoutMs?: number;
+}
+
 /** SiliconFlow embedding 接口原始响应结构 */
 interface EmbeddingResponse {
   /** 向量结果数组，每个元素含 embedding 与 index */
@@ -42,12 +52,14 @@ interface EmbeddingResponse {
  * @param texts  - 待向量化的文本数组
  * @param apiKey - 可选：用户级 SiliconFlow Key（明文，来自 getDecryptedSiliconflowKey）
  *                 传入时优先使用，否则回退到服务端环境变量 SILICONFLOW_API_KEY
+ * @param options - 可选参数（超时等），缺省走内置默认值
  * @returns 与输入等长的二维向量数组（每条 1024 维 number[]）
  * @throws 无 Key / 网络失败 / 返回异常时抛出中文错误
  */
 export async function embedTexts(
   texts: string[],
-  apiKey?: string
+  apiKey?: string,
+  options?: EmbeddingOptions
 ): Promise<number[][]> {
   // ---------- 1. 读取并校验 Key（用户级优先，服务端 env 兜底） ----------
   const key = apiKey || process.env.SILICONFLOW_API_KEY || "";
@@ -69,8 +81,9 @@ export async function embedTexts(
   const model = process.env.EMBEDDING_MODEL ?? "BAAI/bge-m3";
 
   // ---------- 3. 调用 Embedding 接口（带超时保护） ----------
+  const timeoutMs = options?.timeoutMs ?? EMBEDDING_TIMEOUT_MS;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), EMBEDDING_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const res = await fetch(`${baseURL}/embeddings`, {
@@ -124,7 +137,7 @@ export async function embedTexts(
     // 超时单独给友好提示；其余错误原样抛出（内部已带中文前缀）
     if ((error as Error).name === "AbortError") {
       throw new Error(
-        `调用硅基流动 Embedding 接口超时（${EMBEDDING_TIMEOUT_MS / 1000}s）`
+        `调用硅基流动 Embedding 接口超时（${timeoutMs / 1000}s）`
       );
     }
     throw error;
@@ -138,12 +151,14 @@ export async function embedTexts(
  *
  * @param text   - 待向量化的单条文本
  * @param apiKey - 可选：用户级 SiliconFlow Key，传入时优先使用
+ * @param options - 可选参数（超时等），缺省走内置默认值
  * @returns 1024 维向量 number[]
  */
 export async function embedText(
   text: string,
-  apiKey?: string
+  apiKey?: string,
+  options?: EmbeddingOptions
 ): Promise<number[]> {
-  const results = await embedTexts([text], apiKey);
+  const results = await embedTexts([text], apiKey, options);
   return results[0];
 }

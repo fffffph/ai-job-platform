@@ -9,9 +9,9 @@
  * 和 PrismaClient 构造函数的 datasourceUrl 参数（运行时使用）。
  *
  * 【迁移命令（Prisma 7）】
- * npx prisma migrate dev --name init   → 创建数据库表（读取 prisma.config.ts 的 URL）
- * npx prisma generate                   → 生成 Prisma Client 类型
- * npx prisma studio                     → 打开数据库可视化界面
+ * npx prisma db push       → 同步 schema 到数据库（本项目使用此方式，无 migrations 目录）
+ * npx prisma generate      → 生成 Prisma Client 类型
+ * npx prisma studio        → 打开数据库可视化界面
  *
  * @see https://pris.ly/d/config-datasource
  */
@@ -42,6 +42,7 @@ datasource db {
  * - name      : 用户昵称/姓名，可选
  * - avatar    : 头像图片 URL，null 时前端用首字母占位
  * - bio       : 个人简介，可选
+ * - status    : 账号状态（active | disabled），停用后不可登录（RGBAC 权限体系 P0-11）
  * - createdAt : 注册时间，自动生成
  * - updatedAt : 最后更新时间，Prisma 自动管理
  *
@@ -60,6 +61,13 @@ model User {
   name      String?  @map("name")
   avatar    String?  @map("avatar")
   bio       String?  @map("bio")
+  /**
+   * 账号状态（active | disabled）
+   * - active  : 正常，可登录
+   * - disabled: 已停用，登录被拒 + 已登录 token 请求被踢下线
+   * 使用 @default("active") 保证存量用户同步后全部为 active，不影响现有登录。
+   */
+  status    String   @default("active") @map("status")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -83,6 +91,9 @@ model User {
 
   // 【P5 新增】用户求职画像（1:1，用于职位推荐的个性化记忆）
   profile UserProfile?
+
+  // 【P1 角色地基】用户-角色多对多关联（用于权限控制与菜单过滤）
+  userRoles UserRole[]
 
   @@map("users")
 }
@@ -168,4 +179,217 @@ model Chunk {
 
   @@index([documentId])
   @@map("chunks")
+}
+
+// 【P6 新增】============================================
+// TraceRun 模型 —— 一次 AI 执行（Trace 落库）
+// ============================================
+/// 一次 AI 图执行的可观测记录（P6 把 trace 从内存落库）
+/// 一次「简历分析 / 知识库问答 / 职位推荐」对应一条 run，
+/// 下挂多条节点级 TraceEvent，实现决策过程的持久化与历史回放。
+model TraceRun {
+  id              String   @id @default(uuid()) @map("id")
+  userId          String   @map("user_id")
+  /// 图类型：resume（简历分析）/ rag（知识库问答）/ jobs（职位发现）
+  type            String   @map("type")
+  /// 执行结果：success / error
+  status          String   @default("success") @map("status")
+  /// 节点数量
+  nodeCount       Int      @default(0) @map("node_count")
+  /// 总耗时（毫秒，各节点 durationMs 之和）
+  totalDurationMs Int      @default(0) @map("total_duration_ms")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  events          TraceEvent[]
+
+  @@index([userId, createdAt])
+  @@map("trace_runs")
+}
+
+// 【P6 新增】============================================
+// TraceEvent 模型 —— 单个节点执行事件（Trace 落库）
+// ============================================
+/// 单个 AI 节点的执行追踪记录（持久化版）
+/// input/output 存 JSON（Json 类型），序列化失败时降级为 null。
+model TraceEvent {
+  id         String   @id @default(uuid()) @map("id")
+  runId      String   @map("run_id")
+  nodeName   String   @map("node_name")
+  /// 节点执行顺序（从 0 开始，用于回放时保持原始顺序）
+  order      Int      @map("event_order")
+  /// 节点输入（JSON，已脱敏/序列化）
+  input      Json?    @map("input")
+  /// 节点输出（JSON）
+  output     Json?    @map("output")
+  durationMs Int      @map("duration_ms")
+  /// 事件发生时间（ISO 8601 字符串，保留原始值）
+  timestamp  String   @map("timestamp")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  run        TraceRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId])
+  @@map("trace_events")
+}
+
+// 【P1 新增】============================================
+// Role 模型 —— 角色表（RBAC 权限地基）
+// ============================================
+/**
+ * 角色实体 —— 独立表，便于后期自由扩展角色与权限。
+ *
+ * 【设计说明】
+ * - code 为唯一标识（admin / user / ...），业务代码用 code 判断权限，
+ *   中文名 name 只用于前端展示，避免文案硬编码在逻辑里。
+ * - 当前阶段预置 admin（管理员）、user（普通用户）两个角色；
+ *   后期可在此表自由增删角色、并在 user_roles 里给用户绑定。
+ *
+ * 【字段说明】
+ * - code        : 角色唯一标识，如 "admin" / "user"
+ * - name        : 中文名，如 "管理员" / "普通用户"
+ * - description : 角色说明（可选）
+ * - isSystem    : 是否系统内置角色（admin/user=true）。内置角色不可删除，
+ *                 防止误删导致系统锁死（RBAC 权限体系 D4/A3）
+ */
+model Role {
+  id          String     @id @default(uuid()) @map("id")
+  code        String     @unique @map("code")
+  name        String     @map("name")
+  description String?    @map("description")
+  isSystem    Boolean    @default(false) @map("is_system")
+  createdAt   DateTime   @default(now()) @map("created_at")
+
+  users       UserRole[]
+  // 【RBAC 权限体系】角色-菜单绑定（多对多）。admin 角色不写绑定（走代码短路）。
+  menus       RoleMenu[]
+
+  @@map("roles")
+}
+
+// 【P1 新增】============================================
+// UserRole 模型 —— 用户-角色关联表（多对多）
+// ============================================
+/**
+ * 用户与角色的多对多关联表。
+ *
+ * 【为什么用多对多而非 User 上加单字段？】
+ * 用户明确「后期要给不同用户绑定不同角色、控制菜单与权限」，
+ * 多对多（一个用户可绑多个角色）是扩展性最稳的形态：
+ * - 一个用户可同时具备多个角色（如既是普通用户又是审核员）
+ * - 后期加「角色管理页」只需操作此关联表，不改 User 结构
+ *
+ * 【字段说明】
+ * - userId / roleId : 复合主键 @@id([userId, roleId])，天然去重
+ * - onDelete: Cascade —— 用户或角色删除时，关联记录自动清理
+ */
+model UserRole {
+  userId String @map("user_id")
+  roleId String @map("role_id")
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@map("user_roles")
+}
+
+// 【P2 新增】============================================
+// SystemConfig 模型 —— 系统配置表（只存「覆盖值」）
+// ============================================
+/**
+ * 系统级可配置项（全局共享，非用户级）。
+ *
+ * 【核心设计：覆盖值模型】
+ * - 本表只存「被管理员覆盖过的值」，未覆盖的配置项不在本表出现；
+ * - 配置项的「默认值 + 类型 + 元数据」统一登记在代码里的 CONFIG_SCHEMA
+ *   注册表（config/schema.ts），本表仅负责「覆盖 + 持久化」。
+ * - 读取时三级回退：本表 value → 环境变量（部分项）→ 注册表默认值。
+ *
+ * 【为什么用 key-value（EAV）而非结构化字段？】
+ * 配置项会持续增加，key-value 加项不改表结构；类型约束由注册表承担。
+ *
+ * 【字段说明】
+ * - key     : 配置键，对应注册表的 key，如 "prompt.resume_expert"
+ * - value   : 覆盖值（Json，类型由注册表约束）。string/number/boolean/json/json-array
+ *             都存 Json；file 类型预留，value 存 fileId（当前无实际 file 项）
+ * - enabled : 是否启用该覆盖值。false 时读取回退默认值（临时禁用覆盖，
+ *             但保留 value，方便随时重新启用，无需重新填值）
+ * - updatedAt / updatedBy : 审计字段（最后修改时间 / 修改人 userId）
+ */
+model SystemConfig {
+  key       String   @id @map("key")
+  value     Json?    @map("value")
+  /// 配置值类型（string/textarea/number/boolean/json/json-array/file）。
+  /// 注册表项的类型由 CONFIG_SCHEMA 承担，此字段主要供「动态配置」（自定义 key）使用。
+  type      String   @default("string") @map("type")
+  /// 中文名（动态配置「见名知意」展示用；注册表项用注册表 label，此字段可空）
+  label     String?  @map("label")
+  enabled   Boolean  @default(true) @map("enabled")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  updatedBy String?  @map("updated_by")
+
+  @@map("system_configs")
+}
+
+// 【RBAC 权限体系 新增】============================================
+// Menu 模型 —— 菜单（目录/菜单/按钮 三类型统一建模，自引用成树）
+// ============================================
+/**
+ * 菜单实体 —— 以单表自引用（parentId）建模「目录 / 菜单 / 按钮」三种节点，
+ * 其中 button 的 code 即「按钮级权限码」，纳入角色-菜单绑定（RoleMenu）统一授权。
+ *
+ * 【字段说明】
+ * - parentId  : 父级菜单 id，null 表示顶级（自引用关系 MenuTree）
+ * - type      : 节点类型 catalog（目录）| menu（菜单）| button（按钮）
+ * - code      : 唯一标识，同时作为「权限码」；需符合命名规范 ^[a-z][a-z0-9:_-]*$
+ * - path      : 路由路径（button 为空）
+ * - component : 前端组件/子应用标识（预留，可选）
+ * - icon      : 图标名（前端做「字符串 → 图标组件」映射，button 为空）
+ * - sort      : 排序值（同级升序）
+ * - visible   : 是否显示在侧边栏（button 忽略）
+ * - status    : 启用状态 active | disabled（disabled 对所有角色不可见）
+ */
+model Menu {
+  id         String   @id @default(uuid()) @map("id")
+  parentId   String?  @map("parent_id")
+  type       String   @map("type")            // catalog | menu | button
+  code       String   @unique @map("code")    // 唯一标识；button 即权限码
+  name       String   @map("name")
+  path       String?  @map("path")
+  component  String?  @map("component")
+  icon       String?  @map("icon")
+  sort       Int      @default(0) @map("sort")
+  visible    Boolean  @default(true) @map("visible")
+  status     String   @default("active") @map("status") // active | disabled
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  parent     Menu?     @relation("MenuTree", fields: [parentId], references: [id])
+  children   Menu[]    @relation("MenuTree")
+  roles      RoleMenu[]
+
+  @@index([parentId])
+  @@map("menus")
+}
+
+// 【RBAC 权限体系 新增】============================================
+// RoleMenu 模型 —— 角色-菜单绑定（多对多，双向级联删除）
+// ============================================
+/**
+ * 角色与菜单的多对多关联表（授权单元）。
+ *
+ * 【字段说明】
+ * - roleId / menuId : 复合主键 @@id([roleId, menuId])，天然去重
+ * - 双向 onDelete: Cascade —— 角色或菜单删除时，绑定记录自动清理
+ *
+ * 【admin 约定】admin 角色永不写本表记录，鉴权/取菜单时按角色名短路返回全量，
+ * 从根本上避免「绑定数据与代码规则冲突」导致管理员被锁死。
+ */
+model RoleMenu {
+  roleId String @map("role_id")
+  menuId String @map("menu_id")
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  menu   Menu   @relation(fields: [menuId], references: [id], onDelete: Cascade)
+  @@id([roleId, menuId])
+  @@map("role_menus")
 }

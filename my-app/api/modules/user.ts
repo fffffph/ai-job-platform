@@ -24,6 +24,11 @@ import type {
   DeepSeekKeyTestResult,
   SiliconFlowKeyStatus,
   SiliconFlowKeyTestResult,
+  UserRolesResult,
+  UserListResult,
+  UserListQuery,
+  AssignRolesParams,
+  SetUserStatusParams,
 } from "../types";
 
 // ============================================================
@@ -278,6 +283,103 @@ export async function testSiliconFlowKey(
     return {
       success: false,
       message: error?.message || "测试失败，请稍后重试",
+      code: error?.code,
+    };
+  }
+}
+
+// ============================================================
+// 角色查询（RBAC）
+// ============================================================
+
+/**
+ * 获取当前用户角色代码列表（如 ["admin"] / ["user"]）。
+ *
+ * GET /api/user/roles（需 JWT 认证）
+ *
+ * 前端登录后调用一次，据此判断是否管理员、控制「系统设置」等管理入口显示。
+ *
+ * @returns { roles: string[] }（角色代码数组）
+ */
+export async function getMyRoles(): Promise<ApiResponse<UserRolesResult>> {
+  try {
+    return await client.get("/api/user/roles");
+  } catch (error: any) {
+    return {
+      success: false,
+      message: error?.message || "读取用户角色失败",
+      code: error?.code,
+    };
+  }
+}
+
+// ============================================================
+// 用户管理（RBAC 权限体系，管理侧）
+// ============================================================
+
+/**
+ * 获取用户列表（分页 + 关键字）。
+ *
+ * GET /api/user/list（需 system:user）
+ *
+ * @param query - { keyword?, page?, pageSize? }
+ * @returns 用户列表（含角色、状态、注册时间）
+ */
+export async function getUserListApi(
+  query: UserListQuery = {}
+): Promise<ApiResponse<UserListResult>> {
+  try {
+    return await client.get("/api/user/list", { params: query });
+  } catch (error: any) {
+    return {
+      success: false,
+      message: error?.message || "读取用户列表失败",
+      code: error?.code,
+    };
+  }
+}
+
+/**
+ * 分配用户角色（全量重写）。
+ *
+ * PUT /api/user/:id/roles（需 system:user:grant）
+ *
+ * @param userId  - 目标用户 id
+ * @param params  - { roleIds: string[] }
+ */
+export async function assignUserRolesApi(
+  userId: string,
+  params: AssignRolesParams
+): Promise<ApiResponse<null>> {
+  try {
+    return await client.put(`/api/user/${userId}/roles`, params);
+  } catch (error: any) {
+    return {
+      success: false,
+      message: error?.message || "分配角色失败",
+      code: error?.code,
+    };
+  }
+}
+
+/**
+ * 设置用户账号状态（停用 / 启用）。
+ *
+ * PUT /api/user/:id/status（需 system:user:disable；禁止操作自己）
+ *
+ * @param userId - 目标用户 id
+ * @param params - { status: 'active' | 'disabled' }
+ */
+export async function setUserStatusApi(
+  userId: string,
+  params: SetUserStatusParams
+): Promise<ApiResponse<null>> {
+  try {
+    return await client.put(`/api/user/${userId}/status`, params);
+  } catch (error: any) {
+    return {
+      success: false,
+      message: error?.message || "设置账号状态失败",
       code: error?.code,
     };
   }
