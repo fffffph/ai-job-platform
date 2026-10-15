@@ -51,9 +51,20 @@ export type ConfigType =
  * 配置分组 —— 前端「系统设置」页面按此分组展示。
  *
  * custom 为「自定义」分组：管理员在设置页新增的「动态配置」统一归入此组，
- * 与注册表内建项（prompt/llm/rag/jobs/switch）区分开。
+ * 与注册表内建项（prompt/llm/rag/jobs/switch/auth）区分开。
+ *
+ * auth 为「登录与账号」分组（A-P0 新增）：登录方式开关、验证码策略、
+ * 密码策略、新增用户默认凭据等。其中 auth.login.* 会被
+ * GET /api/config/public 作为白名单透出给未登录的登录页。
  */
-export type ConfigGroup = "prompt" | "llm" | "rag" | "jobs" | "switch" | "custom";
+export type ConfigGroup =
+  | "prompt"
+  | "llm"
+  | "rag"
+  | "jobs"
+  | "switch"
+  | "auth"
+  | "custom";
 
 /**
  * 单个配置项的定义（元数据 + 默认值）。
@@ -95,8 +106,41 @@ export const GROUP_LABELS: Record<ConfigGroup, string> = {
   rag: "知识库检索",
   jobs: "职位发现",
   switch: "功能开关",
+  auth: "登录与账号",
   custom: "自定义",
 };
+
+// ============================================================
+// 公开配置白名单（供未登录页面读取）
+// ============================================================
+
+/**
+ * 允许通过 GET /api/config/public 匿名读取的配置键。
+ *
+ * 【为什么需要白名单】
+ * 登录页在**未登录**状态下要决定「显示哪些登录方式」，
+ * 但 GET /api/config 是需要登录态的，登录页拿不到。
+ * 因此单独开一个免登录的公开接口，并且**必须严格白名单**——
+ * 否则 prompt 文案、模型参数、默认密码等项目会全部泄露给匿名访问者。
+ *
+ * 【维护规则】
+ * 新增需要被登录页/注册页读取的配置项时，在此追加 key；
+ * 一律只加 auth.* 里「不含敏感值」的开关类项，
+ * 绝不把 auth.user.default_password 这类凭据加进来。
+ */
+export const PUBLIC_CONFIG_KEYS: readonly string[] = [
+  "auth.register.enabled",
+  "auth.login.password",
+  "auth.login.username",
+  "auth.login.phone",
+  "auth.login.email_otp",
+  "auth.login.sms_otp",
+  "auth.login.otp_auto_register",
+  "auth.captcha.required",
+  "auth.otp.ttl_seconds",
+  "auth.otp.resend_seconds",
+  "auth.password.min_length",
+] as const;
 
 // ============================================================
 // 内置默认值常量（从现有硬编码值提取，P3 参数收敛后成为唯一来源）
@@ -503,6 +547,149 @@ export const CONFIG_SCHEMA: ConfigFieldDef[] = [
     description:
       "关闭后任何请求都无法开启深度思考。开启时也仅当请求显式传 thinking=true 才思考——默认不思考，省时间省费用。生效范围：知识库问答、职位搜索的 Agent 决策；结构化输出节点（职位推荐理由生成、简历分析）受上游接口限制暂不支持",
     group: "switch",
+    defaultValue: true,
+    enabled: true,
+  },
+
+  // ---------- 登录与账号组（auth） ----------
+  // 说明：auth.login.* 与 auth.otp.* 会被 GET /api/config/public 白名单透出，
+  // 供未登录的登录页读取；auth.user.* 与 auth.password.* 仅在系统设置页可见。
+
+  {
+    key: "auth.register.enabled",
+    type: "boolean",
+    label: "开放自助注册",
+    description: "关闭后 /register 页面提交会被拒绝，账号只能由管理员在用户管理里创建",
+    group: "auth",
+    defaultValue: true,
+    enabled: true,
+  },
+  {
+    key: "auth.login.password",
+    type: "boolean",
+    label: "密码登录",
+    description: "登录页「密码登录」方式的总开关。关闭后只能走验证码或第三方登录",
+    group: "auth",
+    defaultValue: true,
+    enabled: true,
+  },
+  {
+    key: "auth.login.username",
+    type: "boolean",
+    label: "允许用用户名登录",
+    description: "关闭后智能识别框中的用户名会被判定为非法，只能用邮箱或手机号",
+    group: "auth",
+    defaultValue: true,
+    enabled: true,
+  },
+  {
+    key: "auth.login.phone",
+    type: "boolean",
+    label: "手机号 + 密码登录",
+    description: "允许用手机号作为登录账号（需先在用户信息里绑定手机号）",
+    group: "auth",
+    defaultValue: false,
+    enabled: true,
+  },
+  {
+    key: "auth.login.email_otp",
+    type: "boolean",
+    label: "邮箱验证码登录",
+    description: "免密登录方式。零资质门槛，推荐优先启用（短信需企业资质）",
+    group: "auth",
+    defaultValue: false,
+    enabled: true,
+  },
+  {
+    key: "auth.login.sms_otp",
+    type: "boolean",
+    label: "手机短信验证码登录",
+    description:
+      "需先在服务端配置短信通道（SMS_PROVIDER）。个人开发者无短信签名/模板资质时请保持关闭",
+    group: "auth",
+    defaultValue: false,
+    enabled: true,
+  },
+  {
+    key: "auth.login.otp_auto_register",
+    type: "boolean",
+    label: "验证码登录未注册时自动注册",
+    description:
+      "开启后，用未注册的邮箱/手机号做验证码登录会直接创建新账号并登录（国内 App 主流体验）。关闭则提示「该账号未注册」",
+    group: "auth",
+    defaultValue: true,
+    enabled: true,
+  },
+  {
+    key: "auth.captcha.required",
+    type: "boolean",
+    label: "发验证码前强制图形验证",
+    description:
+      "防短信/邮件轰炸的关键开关。开启后同一 IP 当日第 3 次请求起必须通过图形验证码。关闭会显著增加被刷风险",
+    group: "auth",
+    defaultValue: true,
+    enabled: true,
+  },
+  {
+    key: "auth.otp.ttl_seconds",
+    type: "number",
+    label: "验证码有效期（秒）",
+    description: "验证码从发送到失效的时长",
+    group: "auth",
+    defaultValue: 300,
+    enabled: true,
+    min: 60,
+    max: 600,
+  },
+  {
+    key: "auth.otp.resend_seconds",
+    type: "number",
+    label: "验证码重发冷却（秒）",
+    description: "同一账号两次发送验证码之间的最小间隔，前端倒计时按此值展示",
+    group: "auth",
+    defaultValue: 60,
+    enabled: true,
+    min: 30,
+    max: 300,
+  },
+  {
+    key: "auth.otp.daily_limit",
+    type: "number",
+    label: "单账号每日验证码上限",
+    description: "同一邮箱/手机号每天最多可请求的验证码条数，防止单账号被刷",
+    group: "auth",
+    defaultValue: 10,
+    enabled: true,
+    min: 1,
+    max: 100,
+  },
+  {
+    key: "auth.password.min_length",
+    type: "number",
+    label: "密码最小长度",
+    description: "注册、修改密码、管理员新增用户时统一的密码长度下限",
+    group: "auth",
+    defaultValue: 8,
+    enabled: true,
+    min: 6,
+    max: 32,
+  },
+  {
+    key: "auth.user.default_password",
+    type: "string",
+    label: "新增用户默认密码",
+    description:
+      "管理员在用户管理里新增账号时，选择「使用系统默认密码」所用的密码。⚠️ 该项为明文展示与存储，仅适合内部/测试账号；正式对外账号建议改用「管理员自行设置」并开启首次登录强制改密",
+    group: "auth",
+    defaultValue: "CareerAI@2026",
+    enabled: true,
+  },
+  {
+    key: "auth.user.must_change_password",
+    type: "boolean",
+    label: "新增用户默认首次登录强制改密",
+    description: "用户管理页「新增用户」弹窗中该开关的默认值",
+    group: "auth",
     defaultValue: true,
     enabled: true,
   },

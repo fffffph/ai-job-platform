@@ -25,6 +25,9 @@ export {
   getUserListApi,
   assignUserRolesApi,
   setUserStatusApi,
+  createUserApi,
+  checkIdentityApi,
+  updateIdentifiersApi,
 } from "./modules/user";
 
 // 菜单模块（RBAC 权限体系）
@@ -92,10 +95,17 @@ export {
   saveConfigOneApi,
   resetConfigOneApi,
   resetAllConfigsApi,
+  getPublicConfigsApi,
 } from "./modules/config";
 
 // Token 工具函数
-export { getToken, setToken, removeToken } from "./client";
+export {
+  getToken,
+  setToken,
+  removeToken,
+  isTokenRemembered,
+  redirectToChangePassword,
+} from "./client";
 
 // 类型导出（使用 type 关键字做类型擦除优化）
 export type {
@@ -150,6 +160,13 @@ export type {
   UserListQuery,
   AssignRolesParams,
   SetUserStatusParams,
+  CreateUserParams,
+  CreateUserResult,
+  IdentifierCheckResult,
+  IdentifierField,
+  PublicConfigMap,
+  UpdateIdentifiersParams,
+  UpdateIdentifiersResult,
 } from "./types";
 
 // 枚举和常量导出

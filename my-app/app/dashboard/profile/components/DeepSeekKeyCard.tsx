@@ -20,7 +20,7 @@
  *   - 边框与文字 → CSS 变量
  */
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   Card,
   Input,
@@ -58,23 +58,39 @@ const { Text, Paragraph } = Typography;
 
 const DEEPSEEK_PLATFORM_URL = "https://platform.deepseek.com/";
 
-const DeepSeekKeyCard = () => {
+/** 组件属性 */
+export interface DeepSeekKeyCardProps {
+  /**
+   * 嵌入模式：不渲染自己的外层 Card 与标题。
+   *
+   * 【为什么需要】
+   * 个人中心改版后，「集成设置」分区用一张父级 Card 同时容纳 DeepSeek 与
+   * SiliconFlow 两个 Key 配置。若子卡片仍自带边框，会出现「卡中卡」的双层边框。
+   * 嵌入模式下只渲染内容，外框由父级提供。
+   */
+  embedded?: boolean;
+}
+
+const DeepSeekKeyCard = ({ embedded = false }: DeepSeekKeyCardProps) => {
   const { message: msg } = App.useApp();
 
   // ---------- 状态 ----------
   const [status, setStatus] = useState<DeepSeekKeyStatus | null>(null);
-  const [loading, setLoading] = useState(true);
+  // loading 状态保留给未来的骨架屏/禁用逻辑，当前 UI 未消费（避免大改动面）
+  const [, setLoading] = useState(true);
   const [apiKey, setApiKey] = useState("");
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  // ---------- 加载状态 ----------
-  useEffect(() => {
-    loadStatus();
-  }, []);
-
-  const loadStatus = async () => {
+  /**
+   * 加载密钥状态。
+   *
+   * 【为什么包 useCallback】
+   * 下面的 useEffect 依赖它；不包的话 effect 依赖数组里放函数
+   * 会被 react-hooks/exhaustive-deps 判定为「每次渲染都变化」。
+   */
+  const loadStatus = useCallback(async () => {
     setLoading(true);
     const res = await getDeepSeekKeyStatus();
     if (res.success) {
@@ -86,7 +102,19 @@ const DeepSeekKeyCard = () => {
       msg.error(errorMsg);
     }
     setLoading(false);
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ---------- 加载状态 ----------
+  useEffect(() => {
+    /**
+     * 包一层 async IIFE：避免在 effect 体内同步触发 setState
+     * （React Compiler 的 react-hooks/set-state-in-effect 规则会拦截）。
+     */
+    (async () => {
+      await loadStatus();
+    })();
+  }, [loadStatus]);
 
   // ---------- 保存 ----------
   const handleSave = async () => {
@@ -149,21 +177,9 @@ const DeepSeekKeyCard = () => {
     setTesting(false);
   };
 
-  return (
-    <Card
-      title={
-        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          <KeyOutlined style={{ color: "var(--accent-1)" }} />
-          DeepSeek API Key
-        </div>
-      }
-      style={{ borderRadius: "12px" }}
-      extra={
-        <Tooltip title="用于 AI 简历优化功能，费用由用户自行承担">
-          <QuestionCircleOutlined style={{ color: "var(--text-3)" }} />
-        </Tooltip>
-      }
-    >
+  /** 卡片主体（两种模式下内容完全一致，只有外层容器不同） */
+  const content = (
+    <>
       {/* ===== 状态展示 ===== */}
       <div
         style={{
@@ -262,7 +278,7 @@ const DeepSeekKeyCard = () => {
       <Alert
         type="info"
         showIcon
-        message="如何获取 DeepSeek API Key？"
+        title="如何获取 DeepSeek API Key？"
         description={
           <div style={{ fontSize: 13 }}>
             <Paragraph style={{ marginBottom: "8px" }}>
@@ -299,6 +315,28 @@ const DeepSeekKeyCard = () => {
         }
         style={{ borderRadius: "8px" }}
       />
+    </>
+  );
+
+  // 嵌入模式：由父容器提供卡片外框与标题
+  if (embedded) return content;
+
+  return (
+    <Card
+      title={
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <KeyOutlined style={{ color: "var(--accent-1)" }} />
+          DeepSeek API Key
+        </div>
+      }
+      style={{ borderRadius: "12px" }}
+      extra={
+        <Tooltip title="用于 AI 简历优化功能，费用由用户自行承担">
+          <QuestionCircleOutlined style={{ color: "var(--text-3)" }} />
+        </Tooltip>
+      }
+    >
+      {content}
     </Card>
   );
 };

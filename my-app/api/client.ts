@@ -18,6 +18,7 @@
  *
  * 【错误处理策略（响应拦截器）】
  * - 401 → 清除 Token，跳转登录页
+ * - 403 + PASSWORD_CHANGE_REQUIRED → 跳转强制改密页（/change-password）
  * - 网络错误 → 提示"网络异常"
  * - 超时 → 提示"请求超时"
  * - 其他错误 → 透传给调用方自行处理
@@ -30,6 +31,7 @@
  */
 
 import axios, { type AxiosInstance, type AxiosError } from "axios";
+import { ErrorCode } from "./types";
 
 // ============================================================
 // 常量配置
@@ -98,6 +100,26 @@ export function setToken(token: string, remember: boolean = false): void {
   }
 }
 
+/**
+ * 当前 Token 是否采用了「记住我」的持久化策略。
+ *
+ * 【用途】
+ * 后端在换绑邮箱时会重签一份 Token（同步 JWT payload 里的 email），
+ * 前端需要用 setToken 覆盖本地存储。此时若不知道用户原本勾没勾「记住我」，
+ * 就会擅自改变登录持久化行为（把会话级顺手变成永久，或反之）。
+ * 用本函数读出原有策略，原样沿用。
+ *
+ * @returns true = 存在 localStorage（持久化）；false = 仅会话级或未登录
+ */
+export function isTokenRemembered(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return Boolean(localStorage.getItem(TOKEN_KEY));
+  } catch {
+    return false;
+  }
+}
+
 /** 清除 Token（退出登录时调用，两个存储都清干净） */
 export function removeToken(): void {
   if (typeof window === "undefined") return;
@@ -107,6 +129,31 @@ export function removeToken(): void {
   } catch {
     // ignore
   }
+}
+
+/**
+ * 跳转到「强制修改初始密码」页（幂等，可重复调用）。
+ *
+ * 【为什么需要这个兜底】
+ * 后端已经对「未改初始密码」的账号拦掉了除「改密」与「读自己资料」之外的
+ * 所有接口（403 PASSWORD_CHANGE_REQUIRED）。正常路径下，登录页会直接把用户
+ * 送到 /change-password，走不到这里。
+ * 但用户完全可能在地址栏手敲 /dashboard/xxx 直接进来 —— 那样页面会先渲染、
+ * 再发请求吃 403。此时必须把他送到强制改密页，而不是把 403 当成普通错误
+ * 弹一个 toast 就完事（那样用户会以为自己没权限，一脸茫然）。
+ *
+ * 【为什么用 replace 而不是 href】
+ * replace 不把「被拦下来的页面」写进浏览器历史，
+ * 否则用户按返回键又会回到那个页面、再吃一次 403，来回弹跳。
+ *
+ * 【为什么先判断当前路径】
+ * /change-password 页面自身也要调接口（GET /api/user/profile），
+ * 若那个请求也失败就会再次触发跳转，形成自我重定向死循环。
+ */
+export function redirectToChangePassword(): void {
+  if (typeof window === "undefined") return;
+  if (window.location.pathname.startsWith("/change-password")) return;
+  window.location.replace("/change-password");
 }
 
 // ============================================================
@@ -212,6 +259,15 @@ client.interceptors.response.use(
         ) {
           window.location.href = "/login";
         }
+      }
+
+      // 403 + PASSWORD_CHANGE_REQUIRED — 账号处于「必须改初始密码」状态
+      // 除改密/读资料外的接口都被后端拦下，这里把用户送去强制改密页
+      if (
+        status === 403 &&
+        data?.code === ErrorCode.PASSWORD_CHANGE_REQUIRED
+      ) {
+        redirectToChangePassword();
       }
 
       // 透传服务端错误信息，调用方自行处理

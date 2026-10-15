@@ -6,13 +6,24 @@
  * ============================================
  *
  * 【职责】
- * - 用户列表：邮箱 / 昵称 / 角色(Tag) / 状态(Tag) / 注册时间 / 操作；
+ * - 用户列表：登录标识（邮箱/手机号/用户名）/ 昵称 / 角色(Tag) / 状态(Tag) /
+ *   最后登录 / 注册时间 / 操作；
+ * - 新增用户：跳转 B-P0-8 的 CreateUserModal（权限 system:user:create）；
  * - 分配角色：多选角色，保存调用接口；
  * - 停用/启用：二次确认；不允许停用当前登录的自己（按钮置灰 + Tooltip）；
- * - 搜索（邮箱/昵称）+ 分页（P1-8）；空态/加载态/错误态齐全。
+ * - 搜索（邮箱/用户名/手机号/昵称）+ 分页；空态/加载态/错误态齐全。
  *
  * 【权限】
  * 写操作按钮由 hasPermission 控制显隐；后端接口兜底鉴权。
+ *   - system:user:create  → 「新增用户」按钮
+ *   - system:user:grant   → 「分配角色」按钮 + 弹窗内角色多选
+ *   - system:user:disable → 「停用/启用」按钮
+ *
+ * 【本次改造要点（B-P0-8）】
+ * 1. 原「邮箱」列升级为「登录标识」列 —— 统一账号模型下，邮箱只是三种标识
+ *    之一，且可为空，只用邮箱做展示会漏掉纯用户名/纯手机号账号。
+ * 2. 新增「最后登录」列：管理员排查「某人到底有没有登过」时最常用。
+ * 3. 新增用户入口。
  */
 
 import React, { useCallback, useEffect, useState } from "react";
@@ -37,6 +48,10 @@ import {
   StopOutlined,
   CheckCircleOutlined,
   UserOutlined,
+  PlusOutlined,
+  MailOutlined,
+  MobileOutlined,
+  KeyOutlined,
 } from "@ant-design/icons";
 import type { TableProps } from "antd";
 import {
@@ -49,8 +64,67 @@ import {
 import type { AdminUserItem, RoleItem } from "@/api";
 import { loadAppConfig, hasPermission } from "@/lib/app-config";
 import { PERMISSIONS } from "@/lib/permissions";
+import CreateUserModal from "./CreateUserModal";
 
 const PAGE_SIZE = 10;
+
+/**
+ * 取用户的「主展示名」——用于弹窗标题、日志等单行文本场景。
+ *
+ * 统一账号模型下 email 可能为 null，直接拼接会出现 "null" 字样，
+ * 因此按 邮箱 → 用户名 → 手机号 → 昵称 → id 的优先级降级。
+ */
+function getUserDisplayName(record: AdminUserItem): string {
+  return (
+    record.email ||
+    record.username ||
+    record.phone ||
+    record.name ||
+    record.id.slice(0, 8)
+  );
+}
+
+/**
+ * 渲染「登录标识」单元格。
+ *
+ * 三种标识可能同时存在，逐个渲染成带图标的 Tag，用 lineHeight 让多行时
+ * 不挤在一起；一个都没有时（理论上不该出现）显示「—」并标红提示。
+ */
+const IdentifierCell: React.FC<{ record: AdminUserItem }> = ({ record }) => {
+  const items: React.ReactNode[] = [];
+
+  if (record.email) {
+    items.push(
+      <Tag key="email" icon={<MailOutlined />} color="blue">
+        {record.email}
+      </Tag>
+    );
+  }
+  if (record.username) {
+    items.push(
+      <Tag key="username" icon={<UserOutlined />} color="geekblue">
+        {record.username}
+      </Tag>
+    );
+  }
+  if (record.phone) {
+    items.push(
+      <Tag key="phone" icon={<MobileOutlined />} color="cyan">
+        {record.phone}
+      </Tag>
+    );
+  }
+
+  if (items.length === 0) {
+    return <Tag color="red">无登录标识</Tag>;
+  }
+
+  return (
+    <Space size={[4, 4]} wrap>
+      {items}
+    </Space>
+  );
+};
 
 const UserManagePage: React.FC = () => {
   const { message } = App.useApp();
@@ -66,8 +140,20 @@ const UserManagePage: React.FC = () => {
   const [selfId, setSelfId] = useState<string>("");
 
   // 按钮级权限
+  const [canCreate, setCanCreate] = useState(false);
   const [canGrant, setCanGrant] = useState(false);
   const [canDisable, setCanDisable] = useState(false);
+  /**
+   * 是否有基础配置权限（system:config）。
+   *
+   * 只用于一件事：决定「新增用户」弹窗里要不要把系统默认密码的**明文**展示
+   * 给操作者（配置项 auth.user.default_password 是明文存储的）。
+   * 没有配置权限的运营同学只看到「密码来自系统配置」的提示文案，看不到值。
+   */
+  const [canReadConfig, setCanReadConfig] = useState(false);
+
+  // 新增用户弹窗
+  const [createOpen, setCreateOpen] = useState(false);
 
   // 分配角色弹窗
   const [assignOpen, setAssignOpen] = useState(false);
@@ -98,8 +184,10 @@ const UserManagePage: React.FC = () => {
     (async () => {
       await loadAppConfig();
       if (cancelled) return;
+      setCanCreate(hasPermission(PERMISSIONS.USER_CREATE));
       setCanGrant(hasPermission(PERMISSIONS.USER_GRANT));
       setCanDisable(hasPermission(PERMISSIONS.USER_DISABLE));
+      setCanReadConfig(hasPermission(PERMISSIONS.SYSTEM_CONFIG));
 
       const [roleRes, profileRes] = await Promise.all([getRoleListApi(), getUserProfile()]);
       if (cancelled) return;
@@ -113,6 +201,18 @@ const UserManagePage: React.FC = () => {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /**
+   * 新增用户成功回调。
+   *
+   * 回到第 1 页并清空关键字 —— 新账号按创建时间倒序一般排在首页，
+   * 但若当前带着搜索词，新账号可能不匹配而「看起来没创建成功」。
+   */
+  const handleCreated = async () => {
+    setCreateOpen(false);
+    setKeyword("");
+    await loadUsers(1, "");
+  };
 
   /** 打开「分配角色」弹窗（回填当前角色） */
   const openAssign = (record: AdminUserItem) => {
@@ -152,14 +252,14 @@ const UserManagePage: React.FC = () => {
 
   const columns: TableProps<AdminUserItem>["columns"] = [
     {
-      title: "邮箱",
+      title: "登录标识",
       dataIndex: "email",
-      key: "email",
-      width: 240,
-      render: (email: string) => (
-        <Space size={8}>
+      key: "identifier",
+      width: 300,
+      render: (_v, record) => (
+        <Space size={8} align="start">
           <Avatar size="small" icon={<UserOutlined />} />
-          <span>{email}</span>
+          <IdentifierCell record={record} />
         </Space>
       ),
     },
@@ -167,8 +267,17 @@ const UserManagePage: React.FC = () => {
       title: "昵称",
       dataIndex: "name",
       key: "name",
-      width: 140,
-      render: (name: string | null) => name || "—",
+      width: 120,
+      render: (name: string | null, record) => (
+        <Space size={4}>
+          <span>{name || "—"}</span>
+          {record.mustChangePassword && (
+            <Tooltip title="该账号尚未完成首次登录改密，当前使用的是管理员设置的初始密码">
+              <KeyOutlined style={{ color: "#faad14" }} />
+            </Tooltip>
+          )}
+        </Space>
+      ),
     },
     {
       title: "角色",
@@ -192,9 +301,21 @@ const UserManagePage: React.FC = () => {
       title: "状态",
       dataIndex: "status",
       key: "status",
-      width: 110,
+      width: 100,
       render: (status: string) =>
         status === "active" ? <Tag color="green">正常</Tag> : <Tag color="red">已停用</Tag>,
+    },
+    {
+      title: "最后登录",
+      dataIndex: "lastLoginAt",
+      key: "lastLoginAt",
+      width: 180,
+      render: (lastLoginAt: string | null) =>
+        lastLoginAt ? (
+          new Date(lastLoginAt).toLocaleString("zh-CN")
+        ) : (
+          <span style={{ color: "var(--muted-foreground, #888)" }}>从未登录</span>
+        ),
     },
     {
       title: "注册时间",
@@ -207,6 +328,7 @@ const UserManagePage: React.FC = () => {
       title: "操作",
       key: "action",
       width: 220,
+      fixed: "right",
       render: (_v, record) => {
         const isSelf = record.id === selfId;
         return (
@@ -266,14 +388,14 @@ const UserManagePage: React.FC = () => {
             用户管理
           </h1>
           <p style={{ margin: 0, color: "var(--muted-foreground, #888)", fontSize: 13 }}>
-            为用户分配角色、停用/启用账号
+            新增用户、分配角色、停用/启用账号
           </p>
         </div>
         <Space>
           <Input.Search
             allowClear
-            placeholder="搜索邮箱或昵称"
-            style={{ width: 240 }}
+            placeholder="搜索邮箱、用户名、手机号或昵称"
+            style={{ width: 260 }}
             onSearch={(value) => {
               setKeyword(value);
               loadUsers(1, value);
@@ -282,6 +404,15 @@ const UserManagePage: React.FC = () => {
           <Button icon={<ReloadOutlined />} onClick={() => loadUsers(page, keyword)} loading={loading}>
             刷新
           </Button>
+          {canCreate && (
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={() => setCreateOpen(true)}
+            >
+              新增用户
+            </Button>
+          )}
         </Space>
       </div>
 
@@ -292,7 +423,7 @@ const UserManagePage: React.FC = () => {
           columns={columns}
           loading={loading}
           size="middle"
-          scroll={{ x: 1080 }}
+          scroll={{ x: 1240 }}
           locale={{ emptyText: <Empty description="暂无用户" /> }}
           pagination={{
             current: page,
@@ -305,9 +436,19 @@ const UserManagePage: React.FC = () => {
         />
       </Card>
 
+      {/* 新增用户弹窗（B-P0-8） */}
+      <CreateUserModal
+        open={createOpen}
+        roles={roles}
+        canGrantRole={canGrant}
+        canReadConfig={canReadConfig}
+        onClose={() => setCreateOpen(false)}
+        onCreated={handleCreated}
+      />
+
       {/* 分配角色弹窗 */}
       <Modal
-        title={assignUser ? `分配角色 · ${assignUser.email}` : "分配角色"}
+        title={assignUser ? `分配角色 · ${getUserDisplayName(assignUser)}` : "分配角色"}
         open={assignOpen}
         onCancel={() => {
           setAssignOpen(false);
@@ -318,7 +459,7 @@ const UserManagePage: React.FC = () => {
         okText="保存"
         cancelText="取消"
         width={520}
-        destroyOnClose
+        destroyOnHidden
       >
         <div style={{ marginBottom: 16, color: "var(--muted-foreground, #888)", fontSize: 13 }}>
           为该用户选择一个或多个角色，保存后将在其重新登录后生效。
@@ -330,6 +471,7 @@ const UserManagePage: React.FC = () => {
           value={selectedRoleIds}
           onChange={(vals) => setSelectedRoleIds(vals)}
           options={roles.map((r) => ({ value: r.id, label: `${r.name}（${r.code}）` }))}
+          optionFilterProp="label"
         />
       </Modal>
     </div>
