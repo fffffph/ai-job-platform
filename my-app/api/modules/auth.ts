@@ -26,11 +26,16 @@ import type { ApiResponse, AuthResult, LoginParams, RegisterParams } from "../ty
 // ============================================================
 
 /**
- * 用户登录
+ * 用户登录（统一入口）
  *
  * POST /api/auth/login
  *
- * @param params - 邮箱和密码
+ * 【统一登录入口】
+ * 前端只有一个「账号」输入框，用户填邮箱 / 手机号 / 用户名都行，
+ * 这里原样以 identifier 发给后端，由后端 resolveIdentifier 判定具体类型。
+ * 前端不做类型判定后再拆成不同字段——避免前后端判定规则漂移。
+ *
+ * @param params - { identifier, password }
  * @returns 成功返回 token + 用户信息，失败返回错误信息
  */
 export async function loginApi(
@@ -53,7 +58,7 @@ export async function loginApi(
  *
  * POST /api/auth/register
  *
- * @param params - 邮箱、密码、可选昵称
+ * @param params - 邮箱、密码、可选用户名（登录账号）、可选昵称
  * @returns 成功返回 token + 用户信息，失败返回错误信息
  */
 export async function registerApi(

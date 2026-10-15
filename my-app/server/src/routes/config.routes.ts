@@ -4,6 +4,9 @@
  * ============================================
  *
  * 【API 端点与权限】
+ * 公开接口 —— 无需登录（供登录页 / 注册页读取登录方式开关）：
+ *   GET    /api/config/public → 白名单公开配置（仅开关与策略类，不含敏感值）
+ *
  * 读接口 —— 对所有登录用户开放（authMiddleware）：
  *   GET    /api/config        → 全部配置项的有效状态（一次渲染用）
  *   GET    /api/config/:key   → 单读某配置项的有效值
@@ -33,6 +36,7 @@ import { requirePermission, PERMISSION_CODES } from "../middleware/rbac.js";
 import {
   getEffectiveConfigs,
   getConfig,
+  getPublicConfigs,
   setConfig,
   setConfigs,
   createConfig,
@@ -60,6 +64,33 @@ configRouter.get("/", authMiddleware, async (_req, res, next) => {
       success: true,
       message: "获取成功",
       data: items,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /api/config/public
+ *
+ * 【免登录】公开配置白名单，供登录页 / 注册页在未登录状态读取。
+ *
+ * 返回 auth.login.*（可用登录方式）、auth.otp.*（验证码倒计时/有效期）、
+ * auth.register.enabled、auth.password.min_length 等**开关与策略类**配置，
+ * 绝不返回 prompt 文案、模型参数或默认密码。
+ *
+ * 【路由顺序警告】
+ * 本路由必须注册在 `/:key` 之前！
+ * Express 按注册顺序匹配，若 `/:key` 在前，"/public" 会被当成 key="public"
+ * 走去查单个配置项，永远读不到白名单。
+ */
+configRouter.get("/public", async (_req, res, next) => {
+  try {
+    const data = await getPublicConfigs();
+    res.status(200).json({
+      success: true,
+      message: "获取成功",
+      data,
     });
   } catch (error) {
     next(error);

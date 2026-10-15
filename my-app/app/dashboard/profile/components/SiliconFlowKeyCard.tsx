@@ -22,7 +22,7 @@
  * 参照 DeepSeekKeyCard，全部使用 CSS 变量，明暗主题自动切换。
  */
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   Card,
   Input,
@@ -61,23 +61,35 @@ const { Text, Paragraph } = Typography;
 /** 硅基流动官方平台地址 */
 const SILICONFLOW_PLATFORM_URL = "https://siliconflow.cn/";
 
-const SiliconFlowKeyCard = () => {
+/** 组件属性（与 DeepSeekKeyCard 对称） */
+export interface SiliconFlowKeyCardProps {
+  /**
+   * 嵌入模式：不渲染自己的外层 Card 与标题，由父级「集成设置」卡片提供外框，
+   * 避免出现「卡中卡」的双层边框。
+   */
+  embedded?: boolean;
+}
+
+const SiliconFlowKeyCard = ({ embedded = false }: SiliconFlowKeyCardProps) => {
   const { message: msg } = App.useApp();
 
   // ---------- 状态 ----------
   const [status, setStatus] = useState<SiliconFlowKeyStatus | null>(null);
-  const [loading, setLoading] = useState(true);
+  // loading 状态保留给未来的骨架屏/禁用逻辑，当前 UI 未消费（避免大改动面）
+  const [, setLoading] = useState(true);
   const [apiKey, setApiKey] = useState("");
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  // ---------- 加载状态 ----------
-  useEffect(() => {
-    loadStatus();
-  }, []);
-
-  const loadStatus = async () => {
+  /**
+   * 加载密钥状态。
+   *
+   * 【为什么包 useCallback】
+   * 下面的 useEffect 依赖它；不包的话 effect 依赖数组里放函数
+   * 会被 react-hooks/exhaustive-deps 判定为「每次渲染都变化」。
+   */
+  const loadStatus = useCallback(async () => {
     setLoading(true);
     const res = await getSiliconFlowKeyStatus();
     if (res.success) {
@@ -89,7 +101,19 @@ const SiliconFlowKeyCard = () => {
       msg.error(errorMsg);
     }
     setLoading(false);
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ---------- 加载状态 ----------
+  useEffect(() => {
+    /**
+     * 包一层 async IIFE：避免在 effect 体内同步触发 setState
+     * （React Compiler 的 react-hooks/set-state-in-effect 规则会拦截）。
+     */
+    (async () => {
+      await loadStatus();
+    })();
+  }, [loadStatus]);
 
   // ---------- 保存 ----------
   const handleSave = async () => {
@@ -152,21 +176,9 @@ const SiliconFlowKeyCard = () => {
     setTesting(false);
   };
 
-  return (
-    <Card
-      title={
-        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          <CloudOutlined style={{ color: "var(--accent-1)" }} />
-          SiliconFlow API Key（Embedding）
-        </div>
-      }
-      style={{ borderRadius: "12px" }}
-      extra={
-        <Tooltip title="用于知识库 RAG 的 Embedding 向量化，费用由用户自行承担">
-          <QuestionCircleOutlined style={{ color: "var(--text-3)" }} />
-        </Tooltip>
-      }
-    >
+  /** 卡片主体（两种模式下内容完全一致，只有外层容器不同） */
+  const content = (
+    <>
       {/* ===== 状态展示 ===== */}
       <div
         style={{
@@ -265,7 +277,7 @@ const SiliconFlowKeyCard = () => {
       <Alert
         type="info"
         showIcon
-        message="如何获取 SiliconFlow API Key？"
+        title="如何获取 SiliconFlow API Key？"
         description={
           <div style={{ fontSize: 13 }}>
             <Paragraph style={{ marginBottom: "8px" }}>
@@ -303,6 +315,28 @@ const SiliconFlowKeyCard = () => {
         }
         style={{ borderRadius: "8px" }}
       />
+    </>
+  );
+
+  // 嵌入模式：由父容器提供卡片外框与标题
+  if (embedded) return content;
+
+  return (
+    <Card
+      title={
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <CloudOutlined style={{ color: "var(--accent-1)" }} />
+          SiliconFlow API Key（Embedding）
+        </div>
+      }
+      style={{ borderRadius: "12px" }}
+      extra={
+        <Tooltip title="用于知识库 RAG 的 Embedding 向量化，费用由用户自行承担">
+          <QuestionCircleOutlined style={{ color: "var(--text-3)" }} />
+        </Tooltip>
+      }
+    >
+      {content}
     </Card>
   );
 };

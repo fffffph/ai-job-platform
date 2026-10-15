@@ -15,6 +15,11 @@ import { requireUser } from "../middleware/auth.js";
 import * as userService from "../services/user.service.js";
 import * as deepseekKeyService from "../services/deepseekKey.service.js";
 import * as siliconflowKeyService from "../services/siliconflowKey.service.js";
+import { PasswordPolicyError } from "../lib/password.js";
+import {
+  IdentifierValidationError,
+  IdentifierConflictError,
+} from "../lib/identifier.js";
 
 // ============================================================
 // 获取用户资料
@@ -104,6 +109,15 @@ export async function updateProfile(
  *
  * Body: { oldPassword: string, newPassword: string }
  * 验证旧密码后，用 bcrypt 加密新密码并更新数据库。
+ *
+ * 【A-P0 新增行为】
+ * 改密码会执行 tokenVersion++ 吊销该用户所有旧 Token，
+ * 因此响应里会带回一个**新的 Token**，前端必须覆盖本地存储，
+ * 否则用户改完密码后下一个请求就会被自己的吊销机制踢下线。
+ *
+ * 【无密码账号】
+ * 管理员代建 / 验证码登录的账号没有密码，此时 oldPassword 可省略，
+ * 语义为「首次设置密码」。
  */
 export async function changePassword(
   req: Request,
@@ -116,32 +130,122 @@ export async function changePassword(
 
     const { oldPassword, newPassword } = req.body;
 
-    // 参数校验
-    if (!oldPassword || !newPassword) {
+    // 参数校验：新密码必填；旧密码允许为空（首次设置密码场景）
+    if (!newPassword) {
       res.status(400).json({
         success: false,
-        message: "旧密码和新密码均为必填项",
+        message: "新密码为必填项",
+        code: "PARAMS_MISSING",
       });
       return;
     }
 
-    if (newPassword.length < 6) {
-      res.status(400).json({
-        success: false,
-        message: "新密码长度不能少于 6 位",
-      });
-      return;
-    }
-
-    await userService.changePassword(userId, oldPassword, newPassword);
+    // 强度校验统一由 service 层负责（长度下限来自系统配置），此处不重复判断
+    const result = await userService.changePassword(
+      userId,
+      oldPassword ?? "",
+      newPassword
+    );
 
     res.status(200).json({
       success: true,
       message: "密码修改成功",
+      // 吊销旧 Token 后必须回传新 Token，前端替换本地存储
+      data: result,
     });
   } catch (error: any) {
     // 旧密码不正确 → 返回 400
     if (error.message?.includes("旧密码不正确")) {
+      res.status(400).json({
+        success: false,
+        message: error.message,
+        code: "WRONG_PASSWORD",
+      });
+      return;
+    }
+    // 新密码强度不足 → 返回 400
+    if (error instanceof PasswordPolicyError) {
+      res.status(400).json({
+        success: false,
+        message: error.message,
+        code: "PASSWORD_WEAK",
+      });
+      return;
+    }
+    next(error);
+  }
+}
+
+// ============================================================
+// 修改登录标识（邮箱 / 手机号 / 用户名）
+// ============================================================
+
+/**
+ * PUT /api/user/identifiers
+ *
+ * Body: { password: string, email?: string|null, phone?: string|null, username?: string|null }
+ *
+ * 【为什么单独一个端点，而不是并进 PUT /api/user/profile】
+ * profile 是「昵称/简介」这类无风险资料，改标识则是账号劫持的最高危操作，
+ * 必须强制校验当前密码。两者安全等级不同，混在一起容易在后续维护中
+ * 不小心把密码校验删掉，因此物理隔离成两个端点。
+ *
+ * 【不传的字段怎么处理】
+ * 传 undefined → 本次不涉及该标识（前端表单永远传全量，因此正常流程不出现）
+ * 传 "" 或 null → 清空该标识
+ *
+ * 【响应】
+ * data.profile 为更新后的资料；若邮箱发生变更，data.token 为重新签发的 Token，
+ * 前端需覆盖本地存储（保持 JWT payload 与库一致）。
+ */
+export async function updateIdentifiers(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const userId = requireUser(req, res);
+    if (!userId) return;
+
+    const { password, email, phone, username } = req.body ?? {};
+
+    const result = await userService.updateIdentifiers(userId, {
+      password,
+      email,
+      phone,
+      username,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "登录标识已更新",
+      data: result,
+    });
+  } catch (error: any) {
+    // 标识被他人占用 → 409（前端提示「该邮箱已被占用，请更换」）
+    if (error instanceof IdentifierConflictError) {
+      res.status(409).json({
+        success: false,
+        message: error.message,
+        code: "IDENTIFIER_EXISTS",
+        data: { conflictField: error.field },
+      });
+      return;
+    }
+    // 格式非法 / 三个标识全空 → 400
+    if (error instanceof IdentifierValidationError) {
+      res.status(400).json({
+        success: false,
+        message: error.message,
+        code: "IDENTIFIER_INVALID",
+      });
+      return;
+    }
+    // 当前密码不正确 / 未填写 → 400
+    if (
+      error.message?.includes("密码不正确") ||
+      error.message?.includes("请输入当前密码")
+    ) {
       res.status(400).json({
         success: false,
         message: error.message,
