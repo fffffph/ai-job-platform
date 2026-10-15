@@ -13,14 +13,25 @@
  * 注册请求体
  *
  * 客户端 POST /api/auth/register 时发送的 JSON 数据。
- * name 字段可选，email 和 password 必填。
+ * email 与 password 必填，username 作为登录账号（可选，不填则只能用邮箱登录）。
+ *
+ * 【username 与 name 的区别（务必分清）】
+ * - username：登录标识（账号），唯一、只能字母数字下划线中划线、禁止纯数字；
+ * - name    ：昵称，仅展示，可重复、可含中文。
+ * 历史遗留：旧版注册页把「用户名」输入框映射给了 name，导致其实没有账号登录能力。
  */
 export interface RegisterRequest {
-  /** 邮箱地址，用于登录和身份识别 */
-  email: string;
+  /**
+   * 邮箱地址，登录标识之一（可选）。
+   * 三标识（email / phone / username）至少要有一个，否则无法登录；
+   * 具体由 Service 层 normalizeAndValidateIdentifiers 统一把关。
+   */
+  email?: string;
   /** 明文密码，服务端收到后通过 bcrypt 加密存储 */
   password: string;
-  /** 用户昵称/姓名（可选） */
+  /** 用户名 / 账号，作为登录标识之一（可选） */
+  username?: string;
+  /** 用户昵称（可选，仅展示用） */
   name?: string;
 }
 
@@ -28,10 +39,17 @@ export interface RegisterRequest {
  * 登录请求体
  *
  * 客户端 POST /api/auth/login 时发送的 JSON 数据。
+ *
+ * 【统一登录入口】
+ * 推荐传 `identifier`（一个输入框，邮箱 / 手机号 / 用户名都能填），
+ * 由服务端 resolveIdentifier 判定具体类型。
+ * 兼容旧版前端传 `email`：identifier 缺省时回退取 email，保证平滑升级。
  */
 export interface LoginRequest {
-  /** 邮箱地址 */
-  email: string;
+  /** 统一账号：邮箱 / 手机号 / 用户名（推荐） */
+  identifier?: string;
+  /** 兼容旧版前端的邮箱字段（identifier 缺省时使用） */
+  email?: string;
   /** 明文密码，服务端通过 bcrypt.compare() 比对数据库中的密文 */
   password: string;
 }
@@ -82,10 +100,17 @@ export interface AuthResponseData {
   /** 用户信息（不包含密码） */
   user: {
     id: string;
-    email: string;
+    /** 邮箱（可空：可能只用手机号/用户名注册） */
+    email: string | null;
+    /** 手机号（可空） */
+    phone: string | null;
+    /** 用户名 / 账号（可空） */
+    username: string | null;
     name: string | null;
     avatar: string | null;
     bio: string | null;
+    /** 是否需要强制修改密码（管理员代建账号时为 true） */
+    mustChangePassword: boolean;
     createdAt: Date;
   };
 }
@@ -202,14 +227,92 @@ export interface RoleListItem {
 export interface AdminUserItem {
   /** 用户 id */
   id: string;
-  /** 邮箱 */
-  email: string;
+  /** 邮箱（登录标识之一，可空） */
+  email: string | null;
+  /** 手机号（登录标识之一，可空） */
+  phone: string | null;
+  /** 用户名 / 账号（登录标识之一，可空） */
+  username: string | null;
   /** 昵称（可空） */
   name: string | null;
   /** 该用户的角色列表 */
   roles: { id: string; code: string; name: string }[];
   /** 账号状态 */
   status: UserStatus;
+  /** 是否需要强制修改密码 */
+  mustChangePassword: boolean;
+  /** 最后登录时间（ISO 字符串，从未登录为 null） */
+  lastLoginAt: string | null;
   /** 注册时间（ISO 字符串） */
   createdAt: string;
+}
+
+/**
+ * 管理员新增用户入参（POST /api/user）。
+ *
+ * 【三个登录标识至少填一个】，由 identifier.ts 的
+ * normalizeAndValidateIdentifiers 统一校验，不走数据库兜底。
+ */
+export interface CreateUserInput {
+  /** 邮箱（登录标识，可选） */
+  email?: string | null;
+  /** 手机号（登录标识，可选） */
+  phone?: string | null;
+  /** 用户名（登录标识，可选） */
+  username?: string | null;
+  /** 昵称（可选） */
+  name?: string | null;
+  /** 管理员备注（可选） */
+  remark?: string | null;
+  /**
+   * 密码来源：
+   * - "default"：使用系统配置项 auth.user.default_password 里的默认密码（默认）
+   * - "custom" ：使用请求传入的 password
+   */
+  passwordMode?: "default" | "custom";
+  /** 密码来源为 custom 时的明文密码 */
+  password?: string | null;
+  /** 分配的角色 id 数组（为空则默认绑定 user 角色） */
+  roleIds?: string[];
+  /** 账号状态，默认 active */
+  status?: UserStatus;
+  /** 是否要求首次登录强制改密，默认 true */
+  mustChangePassword?: boolean;
+}
+
+/**
+ * 新增用户返回数据（POST /api/user）。
+ *
+ * 【安全约定】
+ * 绝不返回 password 哈希。仅当使用系统默认密码时，
+ * 返回 `usedDefaultPassword: true` 提示管理员默认密码来自配置项，
+ * 便于其告知用户或提醒用户尽快改密。
+ */
+export interface CreateUserResult {
+  /** 新用户 id */
+  id: string;
+  /** 邮箱 */
+  email: string | null;
+  /** 手机号 */
+  phone: string | null;
+  /** 用户名 */
+  username: string | null;
+  /** 昵称 */
+  name: string | null;
+  /** 账号状态 */
+  status: UserStatus;
+  /** 绑定的角色列表 */
+  roles: { id: string; code: string; name: string }[];
+  /** 是否使用了系统默认密码（true 时前端提示「密码来自系统配置」） */
+  usedDefaultPassword: boolean;
+  /** 是否需要首次登录强制改密 */
+  mustChangePassword: boolean;
+}
+
+/** 标识唯一性校验结果（GET /api/user/check-identity） */
+export interface IdentifierCheckResult {
+  /** 该标识是否已被占用 */
+  exists: boolean;
+  /** 被占用时给出是哪个字段冲突 */
+  conflictField?: "email" | "phone" | "username";
 }

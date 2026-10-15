@@ -4,10 +4,11 @@
  * ============================================
  *
  * 【API 端点】
- * GET  /api/user/profile   → 获取用户资料（需认证）
- * PUT  /api/user/profile   → 更新用户资料（需认证）
- * PUT  /api/user/password  → 修改密码（需认证）
- * POST /api/user/avatar    → 上传头像（需认证）
+ * GET  /api/user/profile     → 获取用户资料（需认证）
+ * PUT  /api/user/profile     → 更新用户资料（昵称 / 简介，需认证）
+ * PUT  /api/user/password    → 修改密码（需认证）
+ * PUT  /api/user/identifiers → 修改登录标识（邮箱 / 手机号 / 用户名，需当前密码，需认证）
+ * POST /api/user/avatar      → 上传头像（需认证）
  *
  * 所有端点均通过 authMiddleware 保护。
  */
@@ -34,6 +35,9 @@ userRouter.put("/profile", authMiddleware, userController.updateProfile);
 
 // 修改密码
 userRouter.put("/password", authMiddleware, userController.changePassword);
+
+// 修改登录标识（邮箱 / 手机号 / 用户名，需当前密码确认）
+userRouter.put("/identifiers", authMiddleware, userController.updateIdentifiers);
 
 // ============================================================
 // 角色查询路由（需认证，供前端判断权限/过滤菜单）

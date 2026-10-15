@@ -82,11 +82,12 @@ const GROUP_LABELS: Record<ConfigGroup, string> = {
   rag: "知识库检索",
   jobs: "职位发现",
   switch: "功能开关",
+  auth: "登录与账号",
   custom: "自定义",
 };
 
 /** 分组固定展示顺序 */
-const GROUP_ORDER: ConfigGroup[] = ["prompt", "llm", "rag", "jobs", "switch", "custom"];
+const GROUP_ORDER: ConfigGroup[] = ["prompt", "llm", "rag", "jobs", "switch", "auth", "custom"];
 
 /** 类型 → 展示元信息（标签 / 颜色） */
 const TYPE_META: Record<ConfigType, { label: string; color: string }> = {

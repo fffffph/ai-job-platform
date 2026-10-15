@@ -74,6 +74,8 @@ export const PERMISSION_CODES = {
   ROLE_DELETE: "system:role:delete",
   /** 分配权限（按钮） */
   ROLE_GRANT: "system:role:grant",
+  /** 新增用户（按钮）—— A-P0/B-P0 新增 */
+  USER_CREATE: "system:user:create",
   /** 分配角色（按钮） */
   USER_GRANT: "system:user:grant",
   /** 停用用户（按钮） */
