@@ -176,6 +176,56 @@ export interface RegisterParams {
   name?: string;
 }
 
+// ========== A-P1 验证码相关类型 ==========
+
+/** 验证码业务场景 */
+export type OtpScene = "login" | "reset_password";
+
+/** 发送验证码请求参数 */
+export interface SendCodeParams {
+  /** 收码标识：邮箱 / 手机号 */
+  identifier: string;
+  /** 业务场景 */
+  scene: OtpScene;
+  /** 图形验证码 id（后端要求时携带） */
+  captchaId?: string;
+  /** 图形验证码答案 */
+  captchaText?: string;
+}
+
+/** 发送验证码返回数据 */
+export interface SendCodeResult {
+  /** 验证码有效期（秒），前端据此启动倒计时 */
+  expiresIn: number;
+}
+
+/** 验证码登录请求参数 */
+export interface LoginByCodeParams {
+  identifier: string;
+  code: string;
+}
+
+/** 忘记密码（自助找回）请求参数 */
+export interface ForgotPasswordParams {
+  identifier: string;
+  code: string;
+  newPassword: string;
+}
+
+/** 图形验证码返回数据 */
+export interface CaptchaResult {
+  /** 验证码 id（提交 send-code 时回传） */
+  captchaId: string;
+  /** 可渲染的 SVG 字符串 */
+  svg: string;
+}
+
+/** 图形验证码必要性预检返回数据 */
+export interface CaptchaStatusResult {
+  /** true = 下一次发送验证码需要先完成图形验证码（前端应提前展示输入区） */
+  required: boolean;
+}
+
 // ========== 统一错误码枚举 ==========
 
 /** 后端预定义的业务错误码，前端根据错误码做不同处理 */
@@ -214,6 +264,24 @@ export enum ErrorCode {
   PASSWORD_CHANGE_REQUIRED = "PASSWORD_CHANGE_REQUIRED",
   /** 权限不足（403，无权限执行此操作） */
   FORBIDDEN = "FORBIDDEN",
+  /** 账号未注册 / 不存在 */
+  ACCOUNT_NOT_FOUND = "ACCOUNT_NOT_FOUND",
+  /** 验证码无效或已过期 */
+  OTP_INVALID = "OTP_INVALID",
+  /** 验证码发送过于频繁（冷却中） */
+  OTP_TOO_FREQUENT = "OTP_TOO_FREQUENT",
+  /** 单标识 1 小时发送次数超限 */
+  OTP_HOURLY_LIMIT = "OTP_HOURLY_LIMIT",
+  /** 单标识每日发送次数超限 */
+  OTP_DAILY_LIMIT = "OTP_DAILY_LIMIT",
+  /** 单 IP 每日发送次数超限 */
+  OTP_IP_LIMIT = "OTP_IP_LIMIT",
+  /** 用户名不支持验证码登录/收码 */
+  OTP_UNSUPPORTED_IDENTIFIER = "OTP_UNSUPPORTED_IDENTIFIER",
+  /** 需要先完成图形验证码 */
+  CAPTCHA_REQUIRED = "CAPTCHA_REQUIRED",
+  /** 图形验证码错误或已过期 */
+  CAPTCHA_INVALID = "CAPTCHA_INVALID",
 }
 
 // ========== 个人知识库（RAG）类型 ==========
@@ -412,6 +480,15 @@ export const ERROR_MESSAGES: Record<string, string> = {
   [ErrorCode.USER_DISABLED]: "账号已被停用，请联系管理员",
   [ErrorCode.PASSWORD_CHANGE_REQUIRED]: "请先修改初始密码后再继续使用",
   [ErrorCode.FORBIDDEN]: "无权限执行此操作",
+  [ErrorCode.ACCOUNT_NOT_FOUND]: "该账号未注册，请先注册或联系管理员",
+  [ErrorCode.OTP_INVALID]: "验证码无效或已过期，请重新获取",
+  [ErrorCode.OTP_TOO_FREQUENT]: "发送过于频繁，请稍后再试",
+  [ErrorCode.OTP_HOURLY_LIMIT]: "该账号验证码发送过于频繁，请 1 小时后再试",
+  [ErrorCode.OTP_DAILY_LIMIT]: "该账号今日验证码发送次数已达上限，请明天再试",
+  [ErrorCode.OTP_IP_LIMIT]: "当前网络发送验证码过于频繁，请明天再试",
+  [ErrorCode.OTP_UNSUPPORTED_IDENTIFIER]: "用户名无法接收验证码，请改用邮箱或手机号",
+  [ErrorCode.CAPTCHA_REQUIRED]: "请先完成图形验证码",
+  [ErrorCode.CAPTCHA_INVALID]: "图形验证码错误或已过期，请重新获取",
 };
 
 // ========== 系统配置（配置中心）类型 ==========

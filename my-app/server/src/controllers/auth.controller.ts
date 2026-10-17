@@ -26,9 +26,22 @@
 
 import type { Request, Response, NextFunction } from "express";
 import * as authService from "../services/auth.service.js";
+import {
+  sendCode,
+  verifyAndConsume,
+  generateCaptcha,
+  getCaptchaStatus,
+  OtpError,
+} from "../services/verification.service.js";
 import { assertPasswordStrength, PasswordPolicyError } from "../lib/password.js";
 import { IdentifierValidationError } from "../lib/identifier.js";
-import type { RegisterRequest, LoginRequest } from "../types/index.js";
+import type {
+  RegisterRequest,
+  LoginRequest,
+  SendCodeRequest,
+  LoginByCodeRequest,
+  ResetPasswordRequest,
+} from "../types/index.js";
 
 /**
  * 取客户端 IP（用于登录审计）。
@@ -251,5 +264,242 @@ export async function login(
 
     // 其他错误交给全局错误处理中间件
     next(error);
+  }
+}
+
+// ============================================================
+// 验证码相关控制器（A-P1）
+// ============================================================
+
+/**
+ * 统一处理 OtpError / IdentifierValidationError，返回对应状态码与错误码。
+ *
+ * 【为什么抽成辅助函数】
+ * 三个验证码接口（send-code / login-by-code / reset-password）共享同一套
+ * 错误映射，散落各写一份极易漏。集中在这里保证错误码口径一致。
+ *
+ * @returns true 表示已处理（调用方应 return），false 表示交 next 继续
+ */
+function handleOtpError(
+  error: unknown,
+  res: Response,
+  next: NextFunction
+): boolean {
+  // 非 Error 实例无法安全读取 message，直接交给全局错误处理
+  if (!(error instanceof Error)) return false;
+
+  // 验证码业务错误（频控 / 图形验证码 / 验证码无效）
+  if (error instanceof OtpError) {
+    res.status(error.status).json({
+      success: false,
+      message: error.message,
+      code: error.code,
+    });
+    return true;
+  }
+  // 标识格式非法
+  if (error instanceof IdentifierValidationError) {
+    res.status(400).json({
+      success: false,
+      message: error.message,
+      code: "IDENTIFIER_INVALID",
+    });
+    return true;
+  }
+  // 密码强度不足
+  if (error instanceof PasswordPolicyError) {
+    res.status(400).json({
+      success: false,
+      message: error.message,
+      code: "PASSWORD_WEAK",
+    });
+    return true;
+  }
+  // 账号停用
+  if (error.message?.includes("账号已被停用")) {
+    res.status(403).json({
+      success: false,
+      message: error.message,
+      code: "USER_DISABLED",
+    });
+    return true;
+  }
+  // 未注册 / 账号不存在（统一模糊文案）
+  if (
+    error.message?.includes("未注册") ||
+    error.message?.includes("账号不存在") ||
+    error.message?.includes("已被占用")
+  ) {
+    res.status(400).json({
+      success: false,
+      message: error.message,
+      code: "ACCOUNT_NOT_FOUND",
+    });
+    return true;
+  }
+  return false;
+}
+
+/**
+ * GET /api/auth/captcha
+ *
+ * 生成图形验证码，返回 { captchaId, svg }。
+ * 前端把 svg 渲染成图片展示，提交 send-code 时回传 captchaId + 用户输入。
+ */
+export function getCaptcha(
+  _req: Request,
+  res: Response,
+  _next: NextFunction
+): void {
+  const { captchaId, svg } = generateCaptcha();
+  res.status(200).json({ success: true, message: "获取成功", data: { captchaId, svg } });
+}
+
+/**
+ * POST /api/auth/send-code
+ *
+ * 发送验证码。body: { identifier, scene, captchaId?, captchaText? }
+ * 成功返回 { expiresIn }（秒），前端据此启动倒计时。
+ */
+export async function sendVerificationCode(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const { identifier, scene, captchaId, captchaText } =
+      req.body as SendCodeRequest;
+
+    // ---------- 参数校验 ----------
+    if (!identifier || !scene) {
+      res.status(400).json({
+        success: false,
+        message: "账号和场景为必填项",
+        code: "PARAMS_MISSING",
+      });
+      return;
+    }
+    if (!["login", "reset_password"].includes(scene)) {
+      res.status(400).json({
+        success: false,
+        message: "场景不合法，仅支持 login / reset_password",
+        code: "PARAMS_INVALID",
+      });
+      return;
+    }
+
+    // ---------- 调用服务层 ----------
+    const result = await sendCode({
+      identifier,
+      scene: scene as "login" | "reset_password",
+      captchaId,
+      captchaText,
+      ip: getClientIp(req),
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "验证码已发送",
+      data: result,
+    });
+  } catch (error) {
+    if (!handleOtpError(error, res, next)) next(error);
+  }
+}
+
+/**
+ * GET /api/auth/captcha-status
+ *
+ * 预检当前网络下一次发送验证码是否需要图形验证码（公开接口）。
+ * 前端在进入验证码表单时调用：required=true 就提前展示图形验证码输入区，
+ * 让用户「先完成人机验证、再点获取验证码」，避免点了获取才被 428 拦截。
+ */
+export async function getCaptchaStatusApi(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const result = await getCaptchaStatus(getClientIp(req));
+    res.status(200).json({
+      success: true,
+      message: "ok",
+      data: result,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * POST /api/auth/login-by-code
+ *
+ * 验证码登录。body: { identifier, code }
+ * 成功返回 { token, user }，与密码登录同构。
+ */
+export async function loginByCode(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const { identifier, code } = req.body as LoginByCodeRequest;
+
+    if (!identifier || !code) {
+      res.status(400).json({
+        success: false,
+        message: "账号和验证码为必填项",
+        code: "PARAMS_MISSING",
+      });
+      return;
+    }
+
+    const result = await authService.loginByCode(
+      { identifier, code },
+      { ip: getClientIp(req) }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "登录成功",
+      data: result,
+    });
+  } catch (error) {
+    if (!handleOtpError(error, res, next)) next(error);
+  }
+}
+
+/**
+ * POST /api/auth/reset-password
+ *
+ * 忘记密码：验证码 + 新密码。body: { identifier, code, newPassword }
+ * 成功后 tokenVersion++ 踢下线，需用新密码重新登录。
+ */
+export async function resetPassword(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const { identifier, code, newPassword } = req.body as ResetPasswordRequest;
+
+    if (!identifier || !code || !newPassword) {
+      res.status(400).json({
+        success: false,
+        message: "账号、验证码和新密码为必填项",
+        code: "PARAMS_MISSING",
+      });
+      return;
+    }
+
+    await authService.resetPassword({ identifier, code, newPassword });
+
+    res.status(200).json({
+      success: true,
+      message: "密码已重置，请使用新密码登录",
+      data: null,
+    });
+  } catch (error) {
+    if (!handleOtpError(error, res, next)) next(error);
   }
 }
