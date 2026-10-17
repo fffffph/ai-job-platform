@@ -5,7 +5,15 @@
  */
 
 // 认证模块
-export { loginApi, registerApi } from "./modules/auth";
+export {
+  loginApi,
+  registerApi,
+  getCaptchaApi,
+  getCaptchaStatusApi,
+  sendCodeApi,
+  loginByCodeApi,
+  resetPasswordApi,
+} from "./modules/auth";
 
 // 用户模块
 export {
@@ -172,6 +180,13 @@ export type {
   UpdateIdentifiersResult,
   UpdateUserParams,
   ResetPasswordParams,
+  ForgotPasswordParams,
+  SendCodeParams,
+  SendCodeResult,
+  LoginByCodeParams,
+  CaptchaResult,
+  CaptchaStatusResult,
+  OtpScene,
 } from "./types";
 
 // 枚举和常量导出

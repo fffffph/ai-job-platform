@@ -449,6 +449,52 @@ model Menu {
   @@map("menus")
 }
 
+// 【A-P1 新增】============================================
+// VerificationCode 模型 —— 验证码表（登录 / 找回密码 / 绑定标识）
+// ============================================
+/**
+ * 验证码记录（邮箱 / 短信）。
+ *
+ * 【为什么用独立表而非 Redis】
+ * 项目部署栈（5 容器：web / server / subapp / postgres / nginx）没有 Redis，
+ * 为验证码多起一个容器不划算；PostgreSQL 扛这个量级绰绰有余，还能顺便获得
+ * 审计能力。将来并发上来了再换 Redis，接口层不用改。
+ *
+ * 【安全设计（每一条都是防「短信/邮件轰炸」的必需品）】
+ * - 只存 codeHash（HMAC-SHA256），明文永不落库、永不写日志；
+ * - 校验失败累计 attempts 次即作废（须重新获取）；
+ * - 一次性消费：consumed_at 标记后同一码不可复用（防重放）；
+ * - 频控在应用层做（verification.service），本表提供 attempts/max_attempts
+ *   供校验失败计数，request_ip 供「同 IP 每日上限」统计。
+ *
+ * 【字段说明】
+ * - target     : 收码目标（邮箱地址 / 手机号，已归一化）
+ * - channel    : 发送通道 email | sms
+ * - scene      : 业务场景 login | reset_password（后续可扩展 bind_email/bind_phone）
+ * - code_hash  : HMAC-SHA256(code, secret + target) 的十六进制字符串
+ * - expires_at : 过期时间（发送时间 + auth.otp.ttl_seconds）
+ * - attempts   : 已累计的校验失败次数（达到 max_attempts 即作废）
+ * - max_attempts: 允许的最大校验失败次数（默认 5）
+ * - consumed_at: 校验成功时间（null 表示未消费）
+ * - request_ip : 发起发送请求的客户端 IP（用于同 IP 频控统计）
+ */
+model VerificationCode {
+  id           String    @id @default(uuid()) @map("id")
+  target       String    @map("target")
+  channel      String    @map("channel") // email | sms
+  scene        String    @map("scene") // login | reset_password | ...
+  codeHash     String    @map("code_hash")
+  expiresAt    DateTime  @map("expires_at")
+  attempts     Int       @default(0) @map("attempts")
+  maxAttempts  Int       @default(5) @map("max_attempts")
+  consumedAt   DateTime? @map("consumed_at")
+  requestIp    String?   @map("request_ip")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  @@index([target, scene, createdAt])
+  @@map("verification_codes")
+}
+
 // 【RBAC 权限体系 新增】============================================
 // RoleMenu 模型 —— 角色-菜单绑定（多对多，双向级联删除）
 // ============================================

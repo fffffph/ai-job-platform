@@ -20,7 +20,6 @@ import {
   Smartphone,
   User as UserIcon,
   AtSign,
-  ShieldCheck,
 } from "lucide-react";
 import Link from "next/link";
 import { motion } from "framer-motion";
@@ -29,6 +28,7 @@ import { loginApi, setToken, ERROR_MESSAGES, getPublicConfigsApi } from "@/api";
 import type { PublicConfigMap } from "@/api";
 import { resolveIdentifier, IDENTIFIER_LABELS } from "@/lib/identifier";
 import { AuthThemeProvider, AuthShell } from "@/components/auth/AuthShell";
+import OtpLoginForm from "@/components/auth/OtpLoginForm";
 
 /**
  * 登录页 —— 统一登录入口 + 跟随系统主题
@@ -278,30 +278,9 @@ const LoginContent = () => {
           </div>
         )}
 
-        {/* ---------- 验证码登录（B 阶段实现，当前为占位说明） ---------- */}
+        {/* ---------- 验证码登录（A-P1 落地） ---------- */}
         {otpEnabled && activeTab === "otp" ? (
-          <div className="space-y-4">
-            <Alert
-              type="info"
-              showIcon
-              icon={<ShieldCheck className="w-4 h-4" />}
-              title="验证码登录将在下一阶段开放"
-              description={
-                <span className="text-xs leading-relaxed">
-                  开关已在「系统设置 → 登录与账号」中开启，但发码与校验能力
-                  属于 A-P1 阶段。当前请使用密码登录，或用管理员创建的账号登录。
-                </span>
-              }
-            />
-            <Button
-              block
-              type="text"
-              className="text-muted-foreground"
-              onClick={() => setActiveTab("password")}
-            >
-              返回密码登录
-            </Button>
-          </div>
+          <OtpLoginForm config={config} />
         ) : (
           /* ---------- 密码登录（统一账号输入框） ---------- */
           <Form
@@ -379,12 +358,12 @@ const LoginContent = () => {
                   记住我
                 </Checkbox>
               </Form.Item>
-              <span
-                className="text-sm text-muted-foreground cursor-not-allowed select-none opacity-60"
-                title="找回密码将在下一阶段随验证码能力一起开放"
+              <Link
+                href="/forgot-password"
+                className="text-sm text-muted-foreground hover:text-blue-500 transition-colors"
               >
                 忘记密码？
-              </span>
+              </Link>
             </div>
 
             <Form.Item className="mb-0">

@@ -53,9 +53,14 @@ import {
   findIdentifierConflict,
   touchLoginAudit,
 } from "../lib/user-query.js";
+import { verifyAndConsume } from "./verification.service.js";
+import { getConfig } from "../config/config-service.js";
+import { assertPasswordStrength } from "../lib/password.js";
 import type {
   RegisterRequest,
   LoginRequest,
+  LoginByCodeRequest,
+  ResetPasswordRequest,
   AuthResponseData,
 } from "../types/index.js";
 
@@ -260,6 +265,197 @@ export async function login(
     token,
     user: toPublicUser(user),
   };
+}
+
+// ============================================================
+// 验证码登录服务（A-P1）
+// ============================================================
+
+/**
+ * 邮箱 / 手机号验证码登录（免密）。
+ *
+ * 【业务流程】
+ * 1. 校验并一次性消费验证码（verifyAndConsume，含过期/失败次数/重放防护）；
+ * 2. 解析标识（只支持 email / phone，username 无收码通道）；
+ * 3. 查活跃用户：存在 → 校验状态后签发 JWT；
+ *    不存在 → 依据 auth.login.otp_auto_register 决定自动注册或拒绝；
+ * 4. 回写登录审计（method=email_otp / sms_otp）。
+ *
+ * 【自动注册】
+ * 未注册的邮箱/手机号做验证码登录，若开关开启则直接建号（无密码）并登录。
+ * 这类账号密码为空，之后只能用验证码登录，除非用户主动去个人中心设密码。
+ *
+ * @param data - { identifier, code }
+ * @param meta - 客户端 IP（审计 + 自动注册创建账号）
+ * @returns 认证响应
+ */
+export async function loginByCode(
+  data: LoginByCodeRequest,
+  meta: { ip?: string | null } = {}
+): Promise<AuthResponseData> {
+  // ---------- 步骤 1：识别标识（只支持邮箱 / 手机号） ----------
+  const resolved = resolveIdentifier(data.identifier);
+  if (!resolved) {
+    throw new IdentifierValidationError(
+      "请输入正确的邮箱或手机号"
+    );
+  }
+  if (resolved.field === "username") {
+    throw new IdentifierValidationError(
+      "用户名无法使用验证码登录，请改用邮箱或手机号"
+    );
+  }
+
+  // ---------- 步骤 2：校验并消费验证码 ----------
+  // 校验通过即标记 consumed；后续任何失败都不会导致验证码被「退回」，
+  // 用户需重新获取，符合一次性验证码的预期。
+  await verifyAndConsume(resolved.value, "login", data.code);
+
+  // ---------- 步骤 3：查活跃用户 ----------
+  let user = await findActiveUserByIdentifier(resolved.field, resolved.value);
+
+  // ---------- 步骤 4：未注册 → 自动注册或拒绝 ----------
+  if (!user) {
+    const autoRegister = await getConfig<boolean>(
+      "auth.login.otp_auto_register"
+    );
+    if (!autoRegister) {
+      // 不泄露「该账号是否存在」的精准信息，统一返回通用文案
+      throw new Error("该账号未注册，请先注册或联系管理员");
+    }
+
+    // 自动注册：创建无密码账号 + 绑定默认 user 角色
+    user = await createOtpUser(resolved.field, resolved.value);
+  }
+
+  // ---------- 步骤 5：账号停用拦截 ----------
+  if (user.status === "disabled") {
+    throw new Error("账号已被停用，请联系管理员");
+  }
+
+  // ---------- 步骤 6：签发 JWT + 审计 ----------
+  const token = generateToken(user.id, user.email, user.tokenVersion);
+  const method =
+    resolved.field === "email" ? LOGIN_METHOD.EMAIL_OTP : LOGIN_METHOD.SMS_OTP;
+
+  void touchLoginAudit(user.id, {
+    lastLoginAt: new Date(),
+    lastLoginIp: meta.ip ?? null,
+    lastLoginMethod: method,
+  }).catch(() => undefined);
+
+  return { token, user: toPublicUser(user) };
+}
+
+/**
+ * 为「验证码登录自动注册」创建无密码账号。
+ *
+ * 【为什么抽成独立函数】
+ * 自动注册与「密码注册 register」的差异在于：不设密码、不校验密码强度，
+ * 但同样要绑定默认 user 角色、保证账号有登录标识。逻辑内聚便于维护。
+ *
+ * @param field - 标识字段（email / phone）
+ * @param value - 归一化后的标识值
+ * @returns 新建用户（含 tokenVersion 等公开字段）
+ */
+async function createOtpUser(
+  field: "email" | "phone",
+  value: string
+): Promise<NonNullable<Awaited<ReturnType<typeof findActiveUserByIdentifier>>>> {
+  // 建号前做唯一性校验（含软删除行，与数据库唯一索引口径一致）。
+  // 理论上刚查过 findActiveUserByIdentifier 返回 null，但那只过滤了
+  // 软删除行——若存在软删除的旧账号占用该标识，这里应拒绝自动注册，
+  // 避免「软删账号的邮箱又被别人注册」的归属混乱。
+  const conflict = await findIdentifierConflict(
+    field === "email" ? { email: value } : { phone: value }
+  );
+  if (conflict) {
+    throw new Error("该账号标识已被占用，请联系管理员");
+  }
+
+  const created = await prisma.$transaction(async (tx) => {
+    const newUser = await tx.user.create({
+      data: {
+        email: field === "email" ? value : null,
+        phone: field === "phone" ? value : null,
+        // 无密码账号：password 保持 null，仅能用验证码登录
+        username: null,
+        name: null,
+      },
+    });
+
+    const defaultRole = await tx.role.findUnique({
+      where: { code: ROLE_CODES.USER },
+    });
+    if (defaultRole) {
+      await tx.userRole.create({
+        data: { userId: newUser.id, roleId: defaultRole.id },
+      });
+    }
+    return newUser;
+  });
+
+  // 读回完整公开字段（含 tokenVersion / mustChangePassword 等）
+  return (await findActiveUserByIdentifier(field, value))!;
+}
+
+// ============================================================
+// 忘记密码服务（A-P1）
+// ============================================================
+
+/**
+ * 忘记密码：验证码校验通过后重置密码。
+ *
+ * 【业务流程】
+ * 1. 识别标识（邮箱 / 手机号）；
+ * 2. 校验并消费验证码（scene=reset_password，与登录验证码隔离，不可混用）；
+ * 3. 校验新密码强度；
+ * 4. 更新密码哈希 + tokenVersion++（吊销所有旧 Token，强制重新登录）。
+ *
+ * 【为什么 reset_password 与 login 场景隔离】
+ * 登录验证码和找回密码验证码语义不同、发送文案不同、复用会埋下
+ * 「拿登录验证码去重置他人密码」的隐患。scene 隔离从源头杜绝。
+ *
+ * @param data - { identifier, code, newPassword }
+ */
+export async function resetPassword(
+  data: ResetPasswordRequest
+): Promise<void> {
+  // ---------- 步骤 1：识别标识 ----------
+  const resolved = resolveIdentifier(data.identifier);
+  if (!resolved || resolved.field === "username") {
+    throw new IdentifierValidationError("请输入正确的邮箱或手机号");
+  }
+
+  // ---------- 步骤 2：校验并消费找回密码验证码 ----------
+  await verifyAndConsume(resolved.value, "reset_password", data.code);
+
+  // ---------- 步骤 3：校验新密码强度 ----------
+  await assertPasswordStrength(data.newPassword);
+
+  // ---------- 步骤 4：查活跃用户 ----------
+  const user = await findActiveUserByIdentifier(resolved.field, resolved.value);
+  if (!user) {
+    // 验证码已消费，但账号不存在（理论上不可能，发送验证码时会校验）——
+    // 统一返回模糊错误，不泄露账号存在性。
+    throw new Error("账号不存在或已被禁用");
+  }
+  if (user.status === "disabled") {
+    throw new Error("账号已被停用，请联系管理员");
+  }
+
+  // ---------- 步骤 5：加密新密码 + tokenVersion++ 踢下线 ----------
+  const hashedPassword = await bcrypt.hash(data.newPassword, BCRYPT_SALT_ROUNDS);
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      password: hashedPassword,
+      tokenVersion: { increment: 1 },
+      // 找回密码后不再强制改密（用户刚设了新密码）
+      mustChangePassword: false,
+    },
+  });
 }
 
 // ============================================================

@@ -115,6 +115,38 @@ export interface AuthResponseData {
   };
 }
 
+// ========== A-P1 验证码相关类型 ==========
+
+/** 发送验证码请求体（POST /api/auth/send-code） */
+export interface SendCodeRequest {
+  /** 收码标识：邮箱 / 手机号（用户名无收码通道） */
+  identifier: string;
+  /** 业务场景：login | reset_password */
+  scene: "login" | "reset_password";
+  /** 图形验证码 id（同 IP 当日第 3 次起必须携带） */
+  captchaId?: string;
+  /** 图形验证码答案 */
+  captchaText?: string;
+}
+
+/** 验证码登录请求体（POST /api/auth/login-by-code） */
+export interface LoginByCodeRequest {
+  /** 登录标识：邮箱 / 手机号 */
+  identifier: string;
+  /** 验证码 */
+  code: string;
+}
+
+/** 忘记密码请求体（POST /api/auth/reset-password） */
+export interface ResetPasswordRequest {
+  /** 账号标识：邮箱 / 手机号 */
+  identifier: string;
+  /** 验证码 */
+  code: string;
+  /** 新密码 */
+  newPassword: string;
+}
+
 // ========== 用户资料相关类型 ==========
 
 /** 更新用户资料请求体 */
