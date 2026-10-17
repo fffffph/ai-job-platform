@@ -41,6 +41,9 @@ import {
   Select,
   Input,
   Avatar,
+  Form,
+  Radio,
+  Alert,
 } from "antd";
 import {
   ReloadOutlined,
@@ -52,6 +55,8 @@ import {
   MailOutlined,
   MobileOutlined,
   KeyOutlined,
+  EditOutlined,
+  DeleteOutlined,
 } from "@ant-design/icons";
 import type { TableProps } from "antd";
 import {
@@ -60,11 +65,15 @@ import {
   setUserStatusApi,
   getRoleListApi,
   getUserProfile,
+  resetUserPasswordApi,
+  deleteUserApi,
 } from "@/api";
-import type { AdminUserItem, RoleItem } from "@/api";
-import { loadAppConfig, hasPermission } from "@/lib/app-config";
+import type { AdminUserItem, RoleItem, ResetPasswordParams } from "@/api";
+import { loadAppConfig, hasPermission, getConfigValue } from "@/lib/app-config";
 import { PERMISSIONS } from "@/lib/permissions";
+import { validatePassword, passwordRuleHint } from "@/lib/password";
 import CreateUserModal from "./CreateUserModal";
+import EditUserModal from "./EditUserModal";
 
 const PAGE_SIZE = 10;
 
@@ -143,6 +152,9 @@ const UserManagePage: React.FC = () => {
   const [canCreate, setCanCreate] = useState(false);
   const [canGrant, setCanGrant] = useState(false);
   const [canDisable, setCanDisable] = useState(false);
+  const [canUpdate, setCanUpdate] = useState(false);
+  const [canResetPassword, setCanResetPassword] = useState(false);
+  const [canDelete, setCanDelete] = useState(false);
   /**
    * 是否有基础配置权限（system:config）。
    *
@@ -160,6 +172,19 @@ const UserManagePage: React.FC = () => {
   const [assigning, setAssigning] = useState(false);
   const [assignUser, setAssignUser] = useState<AdminUserItem | null>(null);
   const [selectedRoleIds, setSelectedRoleIds] = useState<string[]>([]);
+
+  // 编辑用户弹窗（B-P1）
+  const [editOpen, setEditOpen] = useState(false);
+  const [editUser, setEditUser] = useState<AdminUserItem | null>(null);
+
+  // 重置密码弹窗（B-P1）
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetUser, setResetUser] = useState<AdminUserItem | null>(null);
+  const [resetSubmitting, setResetSubmitting] = useState(false);
+  const [resetForm] = Form.useForm<{
+    passwordMode: "default" | "custom";
+    password?: string;
+  }>();
 
   /** 加载用户列表（分页 + 关键字） */
   const loadUsers = useCallback(
@@ -187,6 +212,9 @@ const UserManagePage: React.FC = () => {
       setCanCreate(hasPermission(PERMISSIONS.USER_CREATE));
       setCanGrant(hasPermission(PERMISSIONS.USER_GRANT));
       setCanDisable(hasPermission(PERMISSIONS.USER_DISABLE));
+      setCanUpdate(hasPermission(PERMISSIONS.USER_UPDATE));
+      setCanResetPassword(hasPermission(PERMISSIONS.USER_RESET_PASSWORD));
+      setCanDelete(hasPermission(PERMISSIONS.USER_DELETE));
       setCanReadConfig(hasPermission(PERMISSIONS.SYSTEM_CONFIG));
 
       const [roleRes, profileRes] = await Promise.all([getRoleListApi(), getUserProfile()]);
@@ -247,6 +275,68 @@ const UserManagePage: React.FC = () => {
       await loadUsers();
     } else {
       message.error(res.message || "设置账号状态失败");
+    }
+  };
+
+  /** 打开「编辑用户」弹窗 */
+  const openEdit = (record: AdminUserItem) => {
+    setEditUser(record);
+    setEditOpen(true);
+  };
+
+  /** 编辑保存成功回调 */
+  const handleSaved = async () => {
+    setEditOpen(false);
+    setEditUser(null);
+    await loadUsers();
+  };
+
+  /** 打开「重置密码」弹窗 */
+  const openReset = (record: AdminUserItem) => {
+    setResetUser(record);
+    resetForm.resetFields();
+    resetForm.setFieldsValue({ passwordMode: "default" });
+    setResetOpen(true);
+  };
+
+  /** 提交重置密码 */
+  const handleResetPassword = async () => {
+    if (!resetUser) return;
+
+    let values: { passwordMode: "default" | "custom"; password?: string };
+    try {
+      values = await resetForm.validateFields();
+    } catch {
+      return;
+    }
+
+    const payload: ResetPasswordParams = {
+      passwordMode: values.passwordMode,
+      password: values.passwordMode === "custom" ? values.password : undefined,
+    };
+
+    setResetSubmitting(true);
+    const res = await resetUserPasswordApi(resetUser.id, payload);
+    setResetSubmitting(false);
+
+    if (res.success) {
+      message.success("密码已重置，该账号已被强制下次登录改密");
+      setResetOpen(false);
+      setResetUser(null);
+      await loadUsers();
+    } else {
+      message.error(res.message || "重置密码失败");
+    }
+  };
+
+  /** 删除用户（软删除） */
+  const handleDelete = async (record: AdminUserItem) => {
+    const res = await deleteUserApi(record.id);
+    if (res.success) {
+      message.success("用户已删除");
+      await loadUsers();
+    } else {
+      message.error(res.message || "删除用户失败");
     }
   };
 
@@ -327,12 +417,22 @@ const UserManagePage: React.FC = () => {
     {
       title: "操作",
       key: "action",
-      width: 220,
+      width: 360,
       fixed: "right",
       render: (_v, record) => {
         const isSelf = record.id === selfId;
         return (
           <Space size={0} wrap>
+            {canUpdate && (
+              <Button
+                type="link"
+                size="small"
+                icon={<EditOutlined />}
+                onClick={() => openEdit(record)}
+              >
+                编辑
+              </Button>
+            )}
             <Button
               type="link"
               size="small"
@@ -342,6 +442,16 @@ const UserManagePage: React.FC = () => {
             >
               分配角色
             </Button>
+            {canResetPassword && (
+              <Button
+                type="link"
+                size="small"
+                icon={<KeyOutlined />}
+                onClick={() => openReset(record)}
+              >
+                重置密码
+              </Button>
+            )}
             <Tooltip title={isSelf ? "不能停用当前登录账号" : ""}>
               <Popconfirm
                 title={record.status === "active" ? "确认停用该账号？" : "确认启用该账号？"}
@@ -363,6 +473,29 @@ const UserManagePage: React.FC = () => {
                 </Button>
               </Popconfirm>
             </Tooltip>
+            {canDelete && (
+              <Tooltip title={isSelf ? "不能删除当前登录账号" : ""}>
+                <Popconfirm
+                  title="确认删除该用户？"
+                  description="删除后该账号将无法登录（软删除，可从回收站恢复，回收站功能后续开放）"
+                  onConfirm={() => handleDelete(record)}
+                  okText="删除"
+                  cancelText="取消"
+                  okButtonProps={{ danger: true }}
+                  disabled={isSelf}
+                >
+                  <Button
+                    type="link"
+                    size="small"
+                    danger
+                    disabled={isSelf}
+                    icon={<DeleteOutlined />}
+                  >
+                    删除
+                  </Button>
+                </Popconfirm>
+              </Tooltip>
+            )}
           </Space>
         );
       },
@@ -423,7 +556,7 @@ const UserManagePage: React.FC = () => {
           columns={columns}
           loading={loading}
           size="middle"
-          scroll={{ x: 1240 }}
+          scroll={{ x: 1380 }}
           locale={{ emptyText: <Empty description="暂无用户" /> }}
           pagination={{
             current: page,
@@ -473,6 +606,84 @@ const UserManagePage: React.FC = () => {
           options={roles.map((r) => ({ value: r.id, label: `${r.name}（${r.code}）` }))}
           optionFilterProp="label"
         />
+      </Modal>
+
+      {/* 编辑用户弹窗（B-P1） */}
+      <EditUserModal
+        open={editOpen}
+        record={editUser}
+        onClose={() => {
+          setEditOpen(false);
+          setEditUser(null);
+        }}
+        onSaved={handleSaved}
+      />
+
+      {/* 重置密码弹窗（B-P1） */}
+      <Modal
+        title={resetUser ? `重置密码 · ${getUserDisplayName(resetUser)}` : "重置密码"}
+        open={resetOpen}
+        onCancel={() => {
+          setResetOpen(false);
+          setResetUser(null);
+        }}
+        onOk={handleResetPassword}
+        confirmLoading={resetSubmitting}
+        okText="重置"
+        cancelText="取消"
+        width={520}
+        destroyOnHidden
+      >
+        <Form
+          form={resetForm}
+          layout="vertical"
+          style={{ marginTop: 8 }}
+        >
+          <Form.Item name="passwordMode" label="密码来源">
+            <Radio.Group>
+              <Radio.Button value="default">
+                <KeyOutlined /> 使用系统默认密码
+              </Radio.Button>
+              <Radio.Button value="custom">自定义新密码</Radio.Button>
+            </Radio.Group>
+          </Form.Item>
+
+          {Form.useWatch("passwordMode", resetForm) === "custom" ? (
+            <Form.Item
+              name="password"
+              label="新密码"
+              rules={[
+                {
+                  validator: (_rule, value: string) => {
+                    const err = validatePassword(
+                      value ?? "",
+                      getConfigValue<number>("auth.password.min_length", 8)
+                    );
+                    return err
+                      ? Promise.reject(new Error(err))
+                      : Promise.resolve();
+                  },
+                },
+              ]}
+              extra={passwordRuleHint(
+                getConfigValue<number>("auth.password.min_length", 8)
+              )}
+            >
+              <Input.Password
+                allowClear
+                placeholder="请输入新密码"
+                autoComplete="new-password"
+              />
+            </Form.Item>
+          ) : (
+            <Alert
+              type="warning"
+              showIcon
+              title="将使用系统配置的默认密码"
+              description="密码来自「系统设置 → 登录与账号 → 新增用户默认密码」。重置后该账号会被强制下次登录改密。"
+            />
+          )}
+        </Form>
       </Modal>
     </div>
   );

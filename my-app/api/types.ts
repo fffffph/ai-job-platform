@@ -640,6 +640,8 @@ export interface AdminUserItem {
   username: string | null;
   /** 昵称（可空） */
   name: string | null;
+  /** 管理员备注（可空） */
+  remark: string | null;
   roles: { id: string; code: string; name: string }[];
   status: UserStatus;
   /** 是否需要强制修改密码 */
@@ -734,6 +736,33 @@ export interface IdentifierCheckResult {
   exists: boolean;
   /** 被占用时说明是哪个字段冲突 */
   conflictField?: IdentifierField;
+}
+
+// ============================================================
+// 编辑用户 / 重置密码（B-P1）
+// ============================================================
+
+/**
+ * 编辑用户入参（PUT /api/user/:id）。
+ *
+ * 【边界】不含角色（走「分配角色」）、不含状态（走「停用/启用」）；
+ * 三标识 PATCH 语义：undefined = 保持原值，"" 或 null = 清空（至少保留一个）。
+ */
+export interface UpdateUserParams {
+  email?: string | null;
+  phone?: string | null;
+  name?: string | null;
+  remark?: string | null;
+  mustChangePassword?: boolean;
+}
+
+/**
+ * 重置密码入参（PUT /api/user/:id/reset-password）。
+ * 复用「系统默认密码 / 自定义」二选一。
+ */
+export interface ResetPasswordParams {
+  passwordMode: "default" | "custom";
+  password?: string;
 }
 
 // ============================================================

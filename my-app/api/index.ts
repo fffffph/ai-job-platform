@@ -28,6 +28,9 @@ export {
   createUserApi,
   checkIdentityApi,
   updateIdentifiersApi,
+  updateUserApi,
+  resetUserPasswordApi,
+  deleteUserApi,
 } from "./modules/user";
 
 // 菜单模块（RBAC 权限体系）
@@ -167,6 +170,8 @@ export type {
   PublicConfigMap,
   UpdateIdentifiersParams,
   UpdateIdentifiersResult,
+  UpdateUserParams,
+  ResetPasswordParams,
 } from "./types";
 
 // 枚举和常量导出

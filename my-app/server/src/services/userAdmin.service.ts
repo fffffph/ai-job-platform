@@ -42,6 +42,8 @@ import type {
   CreateUserInput,
   CreateUserResult,
   IdentifierCheckResult,
+  UpdateUserInput,
+  ResetPasswordInput,
 } from "../types/index.js";
 
 /** 合法账号状态 */
@@ -104,6 +106,7 @@ export async function listUsers(params: {
         phone: true,
         username: true,
         name: true,
+        remark: true,
         status: true,
         mustChangePassword: true,
         lastLoginAt: true,
@@ -123,6 +126,7 @@ export async function listUsers(params: {
     phone: u.phone,
     username: u.username,
     name: u.name,
+    remark: u.remark,
     roles: u.userRoles.map((ur) => ur.role),
     status: (u.status === "disabled" ? "disabled" : "active") as UserStatus,
     mustChangePassword: u.mustChangePassword,
@@ -187,18 +191,24 @@ export async function assertCanAssignRoles(
 // ============================================================
 
 /**
- * 校验某个登录标识是否已被占用（供新增用户表单 blur 时即时提示）。
+ * 校验某个登录标识是否已被占用（供新增/编辑用户表单 blur 时即时提示）。
  *
  * 【注意】这里不过滤 deletedAt —— 与数据库唯一索引口径保持一致，
  * 否则会出现「前端提示可用、提交时报唯一约束错误」的割裂体验。
  *
- * @param field - 标识字段（email | phone | username）
- * @param value - 用户输入的原始值
+ * 【excludeUserId 的用途】
+ * 编辑用户时，目标用户自己的标识天然「已存在」，若不过滤会把自己误判成
+ * 冲突。编辑场景必须传目标用户 id 排除自己。
+ *
+ * @param field         - 标识字段（email | phone | username）
+ * @param value         - 用户输入的原始值
+ * @param excludeUserId - 排除的用户 id（编辑场景传目标用户自己）
  * @returns { exists, conflictField }
  */
 export async function checkIdentifier(
   field: IdentifierField,
-  value: string
+  value: string,
+  excludeUserId?: string
 ): Promise<IdentifierCheckResult> {
   if (!IDENTIFIER_LABELS[field]) {
     throw new MenuValidationError("不支持的校验字段，仅支持 email / phone / username");
@@ -216,7 +226,7 @@ export async function checkIdentifier(
     throw error;
   }
 
-  const conflict = await findIdentifierConflict({ [field]: normalized });
+  const conflict = await findIdentifierConflict({ [field]: normalized }, excludeUserId);
   return conflict
     ? { exists: true, conflictField: conflict.field }
     : { exists: false };
@@ -463,5 +473,215 @@ export async function setStatus(
   await prisma.user.update({
     where: { id: userId },
     data: { status },
+  });
+}
+
+// ============================================================
+// 编辑用户（B-P1）
+// ============================================================
+
+/**
+ * 管理员编辑用户资料。
+ *
+ * 【边界说明】
+ * - 不含角色（走独立「分配角色」接口）、不含状态（走独立「停用/启用」接口）；
+ * - 三标识按 PATCH 语义：undefined = 保持原值，"" 或 null = 清空，
+ *   但与库中现值合并后必须至少保留一个；
+ * - 标识唯一性校验排除自己（否则「没改邮箱」也会命中自己报冲突）。
+ *
+ * @param userId - 目标用户 id
+ * @param input  - 编辑入参（仅处理传入的字段）
+ */
+export async function updateUser(
+  userId: string,
+  input: UpdateUserInput
+): Promise<void> {
+  // ---------- 步骤 1：目标用户必须存在且未软删除 ----------
+  const current = await prisma.user.findFirst({
+    where: { id: userId, ...ACTIVE_USER_FILTER },
+    select: { email: true, phone: true, username: true },
+  });
+  if (!current) {
+    throw new MenuValidationError("用户不存在", 404);
+  }
+
+  // ---------- 步骤 2：三标识「与现值合并 → 归一化 + 格式校验」 ----------
+  // 与个人中心 updateIdentifiers 同款合并逻辑，避免「只改昵称」时把
+  // 未传的邮箱/手机号误清空。
+  //
+  // ★ 登录账号（用户名）是账号的身份标识，创建后不可修改 ——
+  //   这里**强制沿用库中现值**，即使调用方强行传入 username 也不生效，
+  //   从服务端杜绝「改账号」的可能（前端禁用只是体验，这里才是硬边界）。
+  let identifiers;
+  try {
+    identifiers = normalizeAndValidateIdentifiers({
+      email: input.email !== undefined ? input.email : current.email,
+      phone: input.phone !== undefined ? input.phone : current.phone,
+      username: current.username,
+    });
+  } catch (error) {
+    if (error instanceof IdentifierValidationError) {
+      throw new MenuValidationError(error.message);
+    }
+    throw error;
+  }
+
+  // ---------- 步骤 3：唯一性校验（排除自己） ----------
+  const conflict = await findIdentifierConflict(identifiers, userId);
+  if (conflict) {
+    throw new MenuValidationError(
+      `${IDENTIFIER_LABELS[conflict.field]}已被占用，请换一个`
+    );
+  }
+
+  // ---------- 步骤 4：写库（三标识整体覆盖，其余字段按 PATCH 语义） ----------
+  await prisma.user.update({
+    where: { id: userId },
+    data: {
+      email: identifiers.email,
+      phone: identifiers.phone,
+      username: identifiers.username,
+      // 昵称/备注：undefined 保持原值；空串归一为 null（清空）
+      name: input.name !== undefined ? input.name?.trim() || null : undefined,
+      remark:
+        input.remark !== undefined ? input.remark?.trim() || null : undefined,
+      // 强制改密开关：undefined 保持原值
+      mustChangePassword: input.mustChangePassword,
+    },
+  });
+}
+
+// ============================================================
+// 重置密码（B-P1）
+// ============================================================
+
+/**
+ * 管理员重置某用户的密码。
+ *
+ * 【安全流程】
+ * 1. 目标用户必须存在且未软删除
+ * 2. 解析密码来源（系统默认密码 / 自定义），自定义需过强度校验
+ * 3. 更新密码 + tokenVersion++（吊销该用户所有旧 Token，踢下线）+ 强制改密
+ *
+ * 【为什么重置后要强制改密】
+ * 管理员重置的密码（尤其系统默认密码）是「他人已知」的密码，只有让用户
+ * 下次登录立即改掉，账号才能落到「只有本人知道」的安全状态。
+ *
+ * 【为什么不返回明文】
+ * 重置密码不向管理员回显明文（默认密码明文在配置页可见，自定义密码是
+ * 管理员自己输入的），接口只返回成功提示。
+ *
+ * @param userId - 目标用户 id
+ * @param input  - { passwordMode?, password? }
+ */
+export async function resetPassword(
+  userId: string,
+  input: ResetPasswordInput
+): Promise<void> {
+  const user = await prisma.user.findFirst({
+    where: { id: userId, ...ACTIVE_USER_FILTER },
+  });
+  if (!user) {
+    throw new MenuValidationError("用户不存在", 404);
+  }
+
+  // ---------- 解析密码来源 ----------
+  const passwordMode = input.passwordMode === "custom" ? "custom" : "default";
+  let plainPassword: string;
+
+  if (passwordMode === "custom") {
+    if (!input.password) {
+      throw new MenuValidationError(
+        "请填写新密码，或将密码来源改为「使用系统默认密码」"
+      );
+    }
+    try {
+      await assertPasswordStrength(input.password);
+    } catch (error) {
+      if (error instanceof PasswordPolicyError) {
+        throw new MenuValidationError(error.message);
+      }
+      throw error;
+    }
+    plainPassword = input.password;
+  } else {
+    const defaultPassword = await getConfig<string>("auth.user.default_password");
+    if (!defaultPassword || typeof defaultPassword !== "string") {
+      throw new MenuValidationError(
+        "系统默认密码未配置，请到「系统设置 → 登录与账号」填写，或改用「自定义新密码」"
+      );
+    }
+    plainPassword = defaultPassword;
+  }
+
+  const hashedPassword = await bcrypt.hash(plainPassword, BCRYPT_SALT_ROUNDS);
+
+  // ---------- 更新密码 + 踢下线 + 强制改密 ----------
+  await prisma.user.update({
+    where: { id: userId },
+    data: {
+      password: hashedPassword,
+      tokenVersion: { increment: 1 },
+      mustChangePassword: true,
+    },
+  });
+}
+
+// ============================================================
+// 删除用户（B-P1，软删除）
+// ============================================================
+
+/**
+ * 软删除用户（打 deletedAt 标记，不物理删除）。
+ *
+ * 【安全约束】
+ * 1. 禁止删除当前登录的自己；
+ * 2. 禁止删除最后一个 admin（否则系统将无人能进管理后台）。
+ *
+ * 【为什么软删除后无需额外踢下线】
+ * authMiddleware / 登录 / 列表查询都带 deletedAt: null，标记后该账号
+ * 的所有旧 Token 自然 401、无法再登录，无需 tokenVersion++。
+ *
+ * 【软删除保留唯一索引占用】
+ * 与「唯一性校验不过滤 deletedAt」的现有约定一致：软删除账号仍占用
+ * email/phone/username，避免出现「删了 A 再用 A 的邮箱注册」导致的
+ * 数据归属混乱。回收站 / 恢复能力归属 B-P2。
+ *
+ * @param userId     - 目标用户 id
+ * @param operatorId - 当前操作人 id（用于禁止删除自己）
+ */
+export async function softDeleteUser(
+  userId: string,
+  operatorId: string
+): Promise<void> {
+  if (userId === operatorId) {
+    throw new MenuValidationError("不能删除当前登录账号");
+  }
+
+  const user = await prisma.user.findFirst({
+    where: { id: userId, ...ACTIVE_USER_FILTER },
+  });
+  if (!user) {
+    throw new MenuValidationError("用户不存在", 404);
+  }
+
+  // ---------- 保护最后一个 admin ----------
+  const targetRoleCodes = await getUserRoleCodes(userId);
+  if (isAdminRole(targetRoleCodes)) {
+    // 统计当前「未软删除」的 admin 用户数（含目标本身）
+    const adminCount = await prisma.userRole.count({
+      where: {
+        role: { code: ROLE_CODES.ADMIN },
+        user: { deletedAt: null },
+      },
+    });
+    if (adminCount <= 1) {
+      throw new MenuValidationError("系统至少需要保留一个管理员，无法删除");
+    }
+  }
+
+  await prisma.user.update({
+    where: { id: userId },
+    data: { deletedAt: new Date() },
   });
 }
