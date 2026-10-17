@@ -76,9 +76,13 @@ adminUserRouter.get(
 );
 
 /**
- * GET /api/user/check-identity?field=email&value=xxx
+ * GET /api/user/check-identity?field=email&value=xxx[&excludeUserId=yyy]
  *
  * 登录标识唯一性即时校验（供「新增用户」表单在输入框失焦时提示）。
+ *
+ * 【excludeUserId 的用途】
+ * 编辑用户时前端传入目标用户自己的 id，让后端在查重时排除自己，
+ * 否则「未改动」的标识会命中自己、被误判为已占用。
  *
  * 【为什么不给这个接口做免登录】
  * 免登录的唯一性查询等价于一个「账号是否存在」的探测接口，
@@ -92,6 +96,7 @@ adminUserRouter.get(
     try {
       const field = (req.query.field as string) || "";
       const value = (req.query.value as string) || "";
+      const excludeUserId = (req.query.excludeUserId as string) || undefined;
 
       if (!["email", "phone", "username"].includes(field)) {
         res.status(400).json({
@@ -104,7 +109,8 @@ adminUserRouter.get(
 
       const data = await userAdminService.checkIdentifier(
         field as "email" | "phone" | "username",
-        value
+        value,
+        excludeUserId
       );
       res.status(200).json({ success: true, message: "获取成功", data });
     } catch (error) {
@@ -219,6 +225,95 @@ adminUserRouter.put(
       const status = req.body?.status as UserStatus;
       await userAdminService.setStatus(id, status, operatorId);
       res.status(200).json({ success: true, message: "保存成功", data: null });
+    } catch (error) {
+      handleError(error, res, next);
+    }
+  }
+);
+
+/**
+ * PUT /api/user/:id
+ *
+ * 编辑用户（B-P1）。Body: { email?, phone?, name?, remark?, mustChangePassword? }
+ *
+ * 【边界】
+ * - 不含角色（走 /:id/roles）、不含状态（走 /:id/status）；
+ * - 邮箱/手机号 PATCH 语义：undefined=保持，""/null=清空（至少保留一个）；
+ * - ★ 不含 username：登录账号是身份标识，创建后不可修改（service 层强制沿用现值）。
+ */
+adminUserRouter.put(
+  "/:id",
+  authMiddleware,
+  requirePermission(PERMISSION_CODES.USER_UPDATE),
+  async (req, res, next) => {
+    try {
+      const id = req.params.id as string;
+      const body = (req.body ?? {}) as Record<string, unknown>;
+
+      await userAdminService.updateUser(id, {
+        email: body.email === undefined ? undefined : (body.email as string | null),
+        phone: body.phone === undefined ? undefined : (body.phone as string | null),
+        name: body.name === undefined ? undefined : (body.name as string | null),
+        remark:
+          body.remark === undefined ? undefined : (body.remark as string | null),
+        mustChangePassword:
+          typeof body.mustChangePassword === "boolean"
+            ? body.mustChangePassword
+            : undefined,
+      });
+
+      res.status(200).json({ success: true, message: "保存成功", data: null });
+    } catch (error) {
+      handleError(error, res, next);
+    }
+  }
+);
+
+/**
+ * PUT /api/user/:id/reset-password
+ *
+ * 重置密码（B-P1）。Body: { passwordMode?: 'default'|'custom', password? }
+ * 重置后该账号 tokenVersion++（踢下线）+ mustChangePassword=true。
+ */
+adminUserRouter.put(
+  "/:id/reset-password",
+  authMiddleware,
+  requirePermission(PERMISSION_CODES.USER_RESET_PASSWORD),
+  async (req, res, next) => {
+    try {
+      const id = req.params.id as string;
+      const body = (req.body ?? {}) as Record<string, unknown>;
+
+      await userAdminService.resetPassword(id, {
+        passwordMode: body.passwordMode as "default" | "custom" | undefined,
+        password: (body.password as string) ?? null,
+      });
+
+      res.status(200).json({ success: true, message: "密码已重置", data: null });
+    } catch (error) {
+      handleError(error, res, next);
+    }
+  }
+);
+
+/**
+ * DELETE /api/user/:id
+ *
+ * 删除用户（B-P1，软删除）。
+ * 禁止删除当前登录的自己；禁止删除最后一个 admin。
+ */
+adminUserRouter.delete(
+  "/:id",
+  authMiddleware,
+  requirePermission(PERMISSION_CODES.USER_DELETE),
+  async (req, res, next) => {
+    try {
+      const operatorId = requireUser(req, res);
+      if (!operatorId) return;
+
+      const id = req.params.id as string;
+      await userAdminService.softDeleteUser(id, operatorId);
+      res.status(200).json({ success: true, message: "用户已删除", data: null });
     } catch (error) {
       handleError(error, res, next);
     }

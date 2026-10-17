@@ -235,6 +235,8 @@ export interface AdminUserItem {
   username: string | null;
   /** 昵称（可空） */
   name: string | null;
+  /** 管理员备注（可空） */
+  remark: string | null;
   /** 该用户的角色列表 */
   roles: { id: string; code: string; name: string }[];
   /** 账号状态 */
@@ -315,4 +317,47 @@ export interface IdentifierCheckResult {
   exists: boolean;
   /** 被占用时给出是哪个字段冲突 */
   conflictField?: "email" | "phone" | "username";
+}
+
+/**
+ * 管理员编辑用户入参（PUT /api/user/:id）。
+ *
+ * 【边界说明】
+ * - 不含角色：角色分配走独立接口 PUT /api/user/:id/roles；
+ * - 不含状态：停用/启用走独立接口 PUT /api/user/:id/status；
+ * - 三标识按 PATCH 语义：undefined = 保持原值，"" 或 null = 清空，
+ *   但合并后至少保留一个（由 identifier.ts 统一校验）。
+ */
+export interface UpdateUserInput {
+  /** 邮箱（登录标识，可选） */
+  email?: string | null;
+  /** 手机号（登录标识，可选） */
+  phone?: string | null;
+  /**
+   * 注意：编辑接口**故意不提供 username 字段**。
+   * 登录账号（用户名）是账号的身份标识，创建后不可修改，
+   * 避免「改了账号导致他人按原账号找不回」等归属混乱。
+   */
+  /** 昵称（可选，null 表示清空） */
+  name?: string | null;
+  /** 管理员备注（可选，null 表示清空） */
+  remark?: string | null;
+  /** 是否要求首次登录强制改密（undefined 保持原值） */
+  mustChangePassword?: boolean;
+}
+
+/**
+ * 重置密码入参（PUT /api/user/:id/reset-password）。
+ *
+ * 复用「新增用户」的密码来源二选一：
+ * - "default"：使用系统配置项 auth.user.default_password；
+ * - "custom" ：使用请求传入的 password。
+ * 重置后后端会强制该账号下次登录改密（mustChangePassword = true）
+ * 并吊销其所有旧 Token（tokenVersion++）。
+ */
+export interface ResetPasswordInput {
+  /** 密码来源：default（系统默认密码，默认）/ custom（自定义） */
+  passwordMode?: "default" | "custom";
+  /** 密码来源为 custom 时的明文密码 */
+  password?: string | null;
 }
