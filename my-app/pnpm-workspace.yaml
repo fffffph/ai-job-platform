@@ -1,9 +1,6 @@
-allowBuilds:
-  sharp: set this to true or false
-  unrs-resolver: set this to true or false
-# pnpm 11 安全配置：白名单允许这些包运行 postinstall 脚本
+# pnpm 10 安全配置：白名单允许这些包运行 postinstall 脚本
 #
-# pnpm 11 关键变化：
+# pnpm 10 关键变化：
 #   - 旧的 allowBuilds / ignoredBuiltDependencies 写法已废弃
 #   - 新的写法：onlyBuiltDependencies 数组
 #   - 文件位置：必须放在 pnpm-workspace.yaml（package.json 里已不生效）
