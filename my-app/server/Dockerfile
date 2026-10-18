@@ -34,7 +34,7 @@ COPY package.json package-lock.json ./
 # --bin-links=true：强制创建 .bin 链接。
 # alpine 上 npm 偶尔不建某些包的 .bin 链接（疑似 musl 与宿主差异），
 # 加上这个标志避免 "./node_modules/.bin/prisma: not found" 的诡异问题。
-RUN npm ci
+RUN npm ci --registry=https://registry.npmmirror.com
 
 # 拷贝源码 + Prisma 相关文件
 COPY tsconfig.json ./
@@ -88,13 +88,22 @@ COPY package.json package-lock.json ./
 EXPOSE 4000
 
 # ------------------------------------------------------------
-# 启动命令：先建表结构，再启动
+# 启动命令：建表结构 → 灌角色/菜单基线 → 启动服务
 # ------------------------------------------------------------
 # prisma db push（不是 migrate deploy）：
 #   自动同步 schema 到数据库，无需预先生成迁移文件。
 #   适合首次部署 / 没有迁移历史的库。
 #   ⚠️ 生产环境应改用 migrate deploy（带版本控制）—— 改这一行即可。
 #
+# node prisma/seed-roles-docker.mjs（角色 + 菜单种子）：
+#   db push 只建"空表"，不会灌基线数据。少了这一步会出现：
+#   roles 表缺 user 角色、menus 表 0 条 → admin 虽然有全部权限码，
+#   但侧边栏是读菜单表渲染的，于是看不到「系统设置」。
+#   脚本内部全是 upsert，幂等，每次启动跑一遍没有副作用。
+#   用 `|| echo` 兜底：种子失败只打警告、不阻塞服务启动
+#   （数据层问题不应该让整个 API 起不来），失败原因看容器日志。
+#
 # npm start → node --env-file-if-exists=.env dist/index.js
 # 环境变量由 docker-compose 注入，--env-file-if-exists 保证文件缺失不报错
-CMD ["sh", "-c", "./node_modules/.bin/prisma db push && npm start"]
+# ------------------------------------------------------------
+CMD ["sh", "-c", "./node_modules/.bin/prisma db push --accept-data-loss && (node prisma/seed-roles-docker.mjs || echo '[WARN] 角色/菜单种子执行失败，请查看上方日志；可手动执行: node prisma/seed-roles-docker.mjs') && npm start"]

@@ -27,7 +27,7 @@ services:
   # 1. 数据库
   # ==========================================
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: careerai-postgres
 
     # env_file：把文件里的变量注入容器（不在 compose 里写死密钥）
@@ -58,7 +58,6 @@ services:
     networks:
       - app-net
     restart: unless-stopped
-
   # ==========================================
   # 2. 后端 Express API
   # ==========================================
