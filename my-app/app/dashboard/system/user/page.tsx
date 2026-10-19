@@ -72,6 +72,7 @@ import type { AdminUserItem, RoleItem, ResetPasswordParams } from "@/api";
 import { loadAppConfig, hasPermission, getConfigValue } from "@/lib/app-config";
 import { PERMISSIONS } from "@/lib/permissions";
 import { validatePassword, passwordRuleHint } from "@/lib/password";
+import { useIsMobile } from "@/hooks/use-mobile";
 import CreateUserModal from "./CreateUserModal";
 import EditUserModal from "./EditUserModal";
 
@@ -137,6 +138,9 @@ const IdentifierCell: React.FC<{ record: AdminUserItem }> = ({ record }) => {
 
 const UserManagePage: React.FC = () => {
   const { message } = App.useApp();
+
+  // 是否移动端（<768px）：决定表格「操作列」是否取消固定
+  const isMobile = useIsMobile();
 
   const [loading, setLoading] = useState(true);
   const [users, setUsers] = useState<AdminUserItem[]>([]);
@@ -417,8 +421,15 @@ const UserManagePage: React.FC = () => {
     {
       title: "操作",
       key: "action",
-      width: 360,
-      fixed: "right",
+      /**
+       * 移动端适配：
+       * - 桌面端：宽 360 + fixed right，操作按钮始终可见；
+       * - 移动端：取消固定（fixed right 的悬浮层会盖住左侧内容，
+       *   且 360px 列宽几乎占满 440px 视口，左侧内容没法看），
+       *   并把列宽收窄到 200，让按钮多换行、减少横向滚动距离。
+       */
+      width: isMobile ? 200 : 360,
+      fixed: isMobile ? undefined : "right",
       render: (_v, record) => {
         const isSelf = record.id === selfId;
         return (
@@ -503,7 +514,13 @@ const UserManagePage: React.FC = () => {
   ];
 
   return (
-    <div style={{ padding: "24px 32px", maxWidth: 1200, margin: "0 auto" }}>
+    /**
+     * 移动端适配：
+     * - 水平内边距用 clamp()：窄屏（手机）收窄到 16px，≥400px 视口线性放大到 32px，
+     *   避免固定 32px 内边距在 440px 视口下只剩 376px 内容宽度；
+     * - 其余（垂直 24px / 最大宽 1200 / 居中）与原版保持一致。
+     */
+    <div style={{ padding: "24px clamp(16px, 4vw, 32px)", maxWidth: 1200, margin: "0 auto" }}>
       {/* 页头 */}
       <div
         style={{
@@ -524,11 +541,20 @@ const UserManagePage: React.FC = () => {
             新增用户、分配角色、停用/启用账号
           </p>
         </div>
-        <Space>
+        {/*
+          * 工具栏（搜索 / 刷新 / 新增）
+          * 移动端适配要点：
+          * 1. Space 加 wrap —— 默认 Space 不换行，三个控件加起来约 460px，
+          *    在 440px 视口下会把整页撑出横向滚动条（角色管理页只有两个按钮
+          *    所以没暴露这个问题）；
+          * 2. 搜索框 width 260 + maxWidth "100%" —— 宽屏保持 260px，
+          *    窄屏收缩到容器宽度，和按钮一起换行堆叠。
+          */}
+        <Space wrap style={{ justifyContent: "flex-end" }}>
           <Input.Search
             allowClear
             placeholder="搜索邮箱、用户名、手机号或昵称"
-            style={{ width: 260 }}
+            style={{ width: 260, maxWidth: "100%" }}
             onSearch={(value) => {
               setKeyword(value);
               loadUsers(1, value);
