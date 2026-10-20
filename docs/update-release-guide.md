@@ -1,7 +1,7 @@
 # 生产发版操作手册（CareerAI on 腾讯云轻量）
 
-> 服务器：`ubuntu@82.156.111.43`（北京二区，2C2G）
-> 代码目录：`/opt/careerai`　入口：`http://82.156.111.43:8080`
+> 服务器：`ubuntu@82.156.111.43`（北京二区，2C2G）  
+> 代码目录：`/opt/careerai`　入口：`http://82.156.111.43:8080`  
 > 镜像命名：`careerai-<服务>:<日期>-<git哈希>-<打包人>-b<构建号>`，由 `APP_TAG` 控制
 
 ---
@@ -46,7 +46,7 @@ tar -czf /tmp/careerai.tar.gz \
   my-app resume-optimizer docker-compose.yml nginx.conf proxy_headers.conf deploy
 ```
 
-> ⚠️ **必须排除 `.env.docker`**：生产密钥只认服务器上那份，本地覆盖会把线上配置冲掉。
+> ⚠️ **必须排除 `.env.docker`**：生产密钥只认服务器上那份，本地覆盖会把线上配置冲掉。  
 > ⚠️ 排除了 `node_modules`，包只有 4MB 左右；别图省事把依赖打进去（几百 MB 且会覆盖服务器缓存）。
 
 ### 步骤 2｜上传
@@ -120,26 +120,26 @@ docker compose up -d                   # 秒级切回，无需重新构建
 
 ## 四、状态码对照（自查用）
 
-| 现象 | 含义 | 处理 |
-|------|------|------|
-| `/api/health` 502 | server 容器挂了 | `docker compose logs server` |
-| `/api/health` 200 但页面白屏 | web 构建产物问题 | 看浏览器 Network，重建 web |
-| `/api/menu/my` 返回 200 HTML | nginx 把 API 转给了 Next | 检查 `nginx.conf` 的 `location /api/` |
-| 容器 `Restarting` | 启动脚本失败 | 常见：数据库未连上 / pgvector 扩展缺失 |
-| `type "vector" does not exist` | 新库无 pgvector 扩展 | `docker exec careerai-postgres psql -U postgres -d careerai -c 'CREATE EXTENSION IF NOT EXISTS vector;'` |
-| 构建 `heap out of memory` | 内存不足 | 分开构建 / 确认 swap 在 |
+| 现象                             | 含义                   | 处理                                                                                                       |
+| ------------------------------ | -------------------- | -------------------------------------------------------------------------------------------------------- |
+| `/api/health` 502              | server 容器挂了          | `docker compose logs server`                                                                             |
+| `/api/health` 200 但页面白屏        | web 构建产物问题           | 看浏览器 Network，重建 web                                                                                      |
+| `/api/menu/my` 返回 200 HTML     | nginx 把 API 转给了 Next | 检查 `nginx.conf` 的 `location /api/`                                                                       |
+| 容器 `Restarting`                | 启动脚本失败               | 常见：数据库未连上 / pgvector 扩展缺失                                                                                |
+| `type "vector" does not exist` | 新库无 pgvector 扩展      | `docker exec careerai-postgres psql -U postgres -d careerai -c 'CREATE EXTENSION IF NOT EXISTS vector;'` |
+| 构建 `heap out of memory`        | 内存不足                 | 分开构建 / 确认 swap 在                                                                                         |
 
 ---
 
 ## 五、配置文件改动后的特殊处理
 
-| 改了啥 | 需要做什么 |
-|--------|-----------|
-| 源码（tsx/ts） | 重建对应镜像 + `up -d` |
+| 改了啥                                 | 需要做什么                                                                                                        |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| 源码（tsx/ts）                          | 重建对应镜像 + `up -d`                                                                                             |
 | `nginx.conf` / `proxy_headers.conf` | **必须 `docker compose up -d --force-recreate nginx`**（单文件 bind mount，scp 覆盖会换 inode，`nginx -s reload` 读不到新内容） |
-| `docker-compose.yml` | `docker compose up -d`（compose 会自动识别变更并重建） |
-| `.env.docker`（密钥/数据库口令） | `docker compose up -d --force-recreate server`（env 只在容器创建时注入） |
-| 数据库结构（schema.prisma） | 不用手动迁移，server 启动时自动 `prisma db push` |
+| `docker-compose.yml`                | `docker compose up -d`（compose 会自动识别变更并重建）                                                                   |
+| `.env.docker`（密钥/数据库口令）             | `docker compose up -d --force-recreate server`（env 只在容器创建时注入）                                                |
+| 数据库结构（schema.prisma）                | 不用手动迁移，server 启动时自动 `prisma db push`                                                                         |
 
 ---
 
@@ -166,7 +166,7 @@ docker exec careerai-postgres psql -U postgres -d careerai -c 'CREATE EXTENSION 
 cd /opt/careerai && ./deploy/build.sh    # 或按第二节步骤 4-6
 ```
 
-> ⚠️ `deploy/build.sh` 依赖 `git rev-parse` 生成标签。服务器 `/opt/careerai` 是解压出来的目录、**不是 git 仓库**，
-> 在服务器上直接跑会报错。服务器端请用「手工指定 APP_TAG」的方式（第二节步骤 4），
-> 或先 `git init && git add -A && git commit -m init` 把目录变成仓库。
+> ⚠️ `deploy/build.sh` 依赖 `git rev-parse` 生成标签。服务器 `/opt/careerai` 是解压出来的目录、**不是 git 仓库**，  
+> 在服务器上直接跑会报错。服务器端请用「手工指定 APP_TAG」的方式（第二节步骤 4），  
+> 或先 `git init && git add -A && git commit -m init` 把目录变成仓库。  
 > 日常发版推荐在**本地**跑 `deploy/push.sh`，标签由本地 git 生成、带到服务器，天然可溯源。

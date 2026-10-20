@@ -46,6 +46,12 @@ export interface UserProfile {
   phone: string | null;
   /** 用户名 / 账号（登录标识之一，可能为空） */
   username: string | null;
+  /**
+   * 是否已设置登录密码。
+   * 验证码登录自动注册的账号为 false：前端据此把「修改密码」切成
+   * 「首次设置密码」形态，并把「修改登录标识」切成先设密码的引导形态。
+   */
+  hasPassword: boolean;
   name: string | null;
   avatar: string | null;
   bio: string | null;
@@ -826,6 +832,11 @@ export interface IdentifierCheckResult {
  * 三标识 PATCH 语义：undefined = 保持原值，"" 或 null = 清空（至少保留一个）。
  */
 export interface UpdateUserParams {
+  /**
+   * 用户名：仅在目标用户尚未设置时允许提交（首次设置，设置后不可改）。
+   * 已有用户名的用户不要传此字段 —— 后端会强制沿用库中现值。
+   */
+  username?: string;
   email?: string | null;
   phone?: string | null;
   name?: string | null;

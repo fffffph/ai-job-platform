@@ -44,10 +44,13 @@ import {
   IDENTIFIER_LABELS,
   EMAIL_PATTERN,
   validatePhone,
+  validateUsername,
 } from "@/lib/identifier";
 
 /** 表单值类型（与表单项 name 一一对应） */
 interface EditUserFormValues {
+  /** 用户名：仅当目标用户尚未设置时才出现并可编辑（可设置一次） */
+  username?: string;
   email?: string;
   phone?: string;
   name?: string;
@@ -86,6 +89,7 @@ const EditUserModal: React.FC<EditUserModalProps> = ({
 
     form.resetFields();
     form.setFieldsValue({
+      username: record.username ?? "",
       email: record.email ?? "",
       phone: record.phone ?? "",
       name: record.name ?? "",
@@ -147,6 +151,24 @@ const EditUserModal: React.FC<EditUserModalProps> = ({
     { validator: makeUniqueValidator("phone") },
   ];
 
+  /**
+   * 用户名校验（仅在目标用户尚未设置用户名时可编辑）。
+   *
+   * 【为什么允许「设置一次」】
+   * 验证码登录自动注册的账号 username 为 null，若编辑接口永远沿用现值，
+   * 管理员将永远无法为这类用户补全账号 —— 成为管理死角。
+   * 后端已同步放开：null 时可设置一次，写库后同样进入不可变状态。
+   */
+  const usernameRules: FormRule[] = [
+    {
+      validator: (_rule, value: string) => {
+        const err = validateUsername((value ?? "").trim());
+        return err ? Promise.reject(new Error(err)) : Promise.resolve();
+      },
+    },
+    { validator: makeUniqueValidator("username") },
+  ];
+
   // ============================================================
   // 提交
   // ============================================================
@@ -162,18 +184,22 @@ const EditUserModal: React.FC<EditUserModalProps> = ({
     }
 
     // ---------- 手工校验：至少保留一个登录标识 ----------
-    // 账号（username）不可改也不可清空，因此：
-    // - 若该用户本就有账号，邮箱/手机号可同时清空（账号仍在，能正常登录）；
-    // - 若该用户本就没有账号（纯邮箱/手机号注册），则邮箱、手机号至少保留一个。
+    // 账号（username）设置后不可改，因此：
+    // - 若该用户已有账号，或本次正在设置账号，邮箱/手机号可同时清空；
+    // - 若该用户没有账号且本次也不设置，则邮箱、手机号至少保留一个。
     const email = values.email?.trim() || null;
     const phone = values.phone?.trim() || null;
+    const newUsername = record.username ? record.username : values.username?.trim() || null;
 
-    if (!record.username && !email && !phone) {
-      message.error("该用户未设置账号，请至少保留邮箱或手机号中的一项");
+    if (!newUsername && !email && !phone) {
+      message.error("请至少保留账号、邮箱、手机号中的一项，否则该账号将无法登录");
       return;
     }
 
     const payload: UpdateUserParams = {
+      // 用户名：仅在目标用户原本没有时才提交（首次设置）；已有值不传，
+      // 后端会强制沿用库中现值 —— 即使强传也不生效
+      ...(record.username ? {} : { username: values.username?.trim() || undefined }),
       email,
       phone,
       // 昵称/备注：空串归一为 null（清空）
@@ -221,21 +247,45 @@ const EditUserModal: React.FC<EditUserModalProps> = ({
           type="info"
           showIcon
           style={{ marginBottom: 16 }}
-          title="账号（用户名）不可修改"
-          description="账号是用户的登录身份标识，创建后固定不变。此处仅可修改邮箱、手机号两个联系方式，且二者不能同时清空，否则该账号将无法登录。"
+          title={record?.username ? "账号（用户名）不可修改" : "账号（用户名）仅可设置一次"}
+          description={
+            record?.username
+              ? "账号是用户的登录身份标识，设置后固定不变。此处仅可修改邮箱、手机号两个联系方式，且二者不能同时清空，否则该账号将无法登录。"
+              : "该账号由验证码登录自动注册，尚未设置用户名。可以现在为其设置一次用户名，设置后将不可再修改；也可以不设置，仅用邮箱/手机号登录。"
+          }
         />
 
-        <Form.Item
-          label="账号（用户名）"
-          extra="登录身份标识，创建后不可修改"
-        >
-          <Input
-            disabled
-            prefix={<UserOutlined style={{ color: "#9ca3af" }} />}
-            value={record?.username ?? "（未设置账号）"}
-            autoComplete="off"
-          />
-        </Form.Item>
+        {record?.username ? (
+          // 已有用户名 → 只读展示（不可修改，硬边界在服务端）
+          <Form.Item
+            label="账号（用户名）"
+            extra="登录身份标识，设置后不可修改"
+          >
+            <Input
+              disabled
+              prefix={<UserOutlined style={{ color: "#9ca3af" }} />}
+              value={record.username}
+              autoComplete="off"
+            />
+          </Form.Item>
+        ) : (
+          // 未设置用户名（验证码自动注册）→ 允许设置一次
+          <Form.Item
+            name="username"
+            label="账号（用户名）"
+            rules={usernameRules}
+            validateDebounce={500}
+            validateFirst
+            extra="可留空。一旦设置不可修改；仅限字母、数字、中划线、下划线，且不能是纯数字"
+          >
+            <Input
+              allowClear
+              prefix={<UserOutlined style={{ color: "#9ca3af" }} />}
+              placeholder="如 zhangsan（可选）"
+              autoComplete="off"
+            />
+          </Form.Item>
+        )}
 
         <Form.Item
           name="email"

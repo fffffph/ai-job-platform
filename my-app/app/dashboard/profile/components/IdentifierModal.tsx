@@ -17,11 +17,13 @@
  * 既冗长又容易误操作（把不想改的那个也一起提交了）。这里按行弹单字段，
  * 未涉及的字段**根本不提交**，由后端按 PATCH 语义保持原值。
  *
- * 【为什么必须填当前密码】
- * 在没有「新邮箱收验证码」能力之前（个人开发、无短信/邮件服务商资质），
- * 改登录标识是账号劫持的最高危入口：别人趁你电脑没锁屏，把邮箱换成他的，
- * 再走「忘记密码」就能永久接管账号。用「输入当前密码」做二次确认，
- * 是当前成本最低、收益最高的折中方案。
+ * 【身份确认的两种形态（按 hasPassword 分流）】
+ * - 已设置密码：弹窗内输入「当前密码」做二次确认 —— 改登录标识是账号劫持
+ *   的最高危入口，没有验证码收码能力前，密码确认是成本最低的折中方案；
+ * - 未设置密码（验证码登录自动注册的账号 password 为 null）：不再要求填
+ *   「当前密码」（账号根本没有密码，填什么都不成立），改为引导先去
+ *   「登录与安全」设置密码，设置完成后再回来改标识。后端同样会硬拒绝
+ *   无密码账号的改标识请求 —— 前端引导只是体验，服务端才是安全边界。
  *
  * 【「未验证」是什么意思】
  * 后端目前只校验标识的**格式**与**唯一性**，没有发码验证归属。
@@ -85,8 +87,8 @@ export interface IdentifierModalProps {
 interface IdentifierFormValues {
   /** 新的标识值（清空即代表删除该标识） */
   value: string;
-  /** 当前密码（身份确认） */
-  password: string;
+  /** 当前密码（身份确认；仅已设置密码的账号需要） */
+  password?: string;
 }
 
 const IdentifierModal: React.FC<IdentifierModalProps> = ({
@@ -103,6 +105,8 @@ const IdentifierModal: React.FC<IdentifierModalProps> = ({
   const meta = FIELD_META[field];
   const label = IDENTIFIER_LABELS[field];
   const currentValue = profile[field] ?? "";
+  /** 是否已设置密码（未设置的验证码注册账号走「先设密码」引导形态） */
+  const hasPassword = profile.hasPassword;
 
   // ---------- 打开时回填原值 ----------
   useEffect(() => {
@@ -123,7 +127,8 @@ const IdentifierModal: React.FC<IdentifierModalProps> = ({
       setSubmitting(true);
 
       const res = await updateIdentifiersApi({
-        password: values.password,
+        // 未设置密码的账号不传密码字段（后端对无密码账号会直接拒绝并引导先设密码）
+        ...(hasPassword ? { password: values.password } : {}),
         // 用 [field] 动态键：一次只提交一个标识
         [field]: values.value?.trim() ?? "",
       } as Parameters<typeof updateIdentifiersApi>[0]);
@@ -154,7 +159,7 @@ const IdentifierModal: React.FC<IdentifierModalProps> = ({
 
       setSubmitting(false);
     },
-    [field, label, message, onClose, onUpdated]
+    [field, hasPassword, label, message, onClose, onUpdated]
   );
 
   /**
@@ -215,27 +220,45 @@ const IdentifierModal: React.FC<IdentifierModalProps> = ({
       footer={
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
           <Button onClick={onClose}>取消</Button>
-          <Button type="primary" loading={submitting} onClick={() => form.submit()}>
+          <Button
+            type="primary"
+            loading={submitting}
+            // 未设置密码的账号不允许提交：先去设置密码（见上方引导提示）
+            disabled={!hasPassword}
+            onClick={() => form.submit()}
+          >
             保存
           </Button>
         </div>
       }
     >
       <Alert
-        type="info"
+        type={hasPassword ? "info" : "warning"}
         showIcon
         style={{ marginBottom: 16 }}
-        title="修改登录标识需要验证当前密码"
+        title={
+          hasPassword
+            ? "修改登录标识需要验证当前密码"
+            : "当前账号尚未设置密码，暂时无法修改登录标识"
+        }
         description={
-          <span style={{ fontSize: 12, lineHeight: 1.7 }}>
-            登录标识可以用来登录本系统，属于高敏感信息，因此修改前需要确认身份。
-            <br />
-            标识目前仅校验格式与唯一性，
-            <Tag color="default" style={{ marginInline: 4, fontSize: 11 }}>
-              未验证
-            </Tag>
-            表示尚未通过验证码确认归属（验证码能力开放后会自动升级）。
-          </span>
+          hasPassword ? (
+            <span style={{ fontSize: 12, lineHeight: 1.7 }}>
+              登录标识可以用来登录本系统，属于高敏感信息，因此修改前需要确认身份。
+              <br />
+              标识目前仅校验格式与唯一性，
+              <Tag color="default" style={{ marginInline: 4, fontSize: 11 }}>
+                未验证
+              </Tag>
+              表示尚未通过验证码确认归属（验证码能力开放后会自动升级）。
+            </span>
+          ) : (
+            <span style={{ fontSize: 12, lineHeight: 1.7 }}>
+              验证码登录注册的账号默认没有密码。请先在「个人中心 → 登录与安全
+              → 密码」处设置密码，设置完成后再回来修改登录标识 ——
+              届时需要输入该密码确认身份。
+            </span>
+          )
         }
       />
 
@@ -270,11 +293,18 @@ const IdentifierModal: React.FC<IdentifierModalProps> = ({
           />
         </Form.Item>
 
-        <Form.Item
-          name="password"
-          label="当前密码"
-          rules={[{ required: true, message: "请输入当前密码以确认身份" }]}
-        >
+        {/*
+          当前密码输入框仅在「已设置密码」时渲染：
+          无密码账号（验证码注册）没有可校验的密码，展示这个框只会让用户
+          困惑（实测有用户填了 admin 的密码也「成功」——旧后端对无密码账号
+          跳过比对，这是个安全漏洞，后端已改为明确拒绝）。
+        */}
+        {hasPassword && (
+          <Form.Item
+            name="password"
+            label="当前密码"
+            rules={[{ required: true, message: "请输入当前密码以确认身份" }]}
+          >
           {/*
             【为什么用 new-password 而不是 current-password】
             标 current-password 时，Chrome/Edge 的密码管理器会把本表单里
@@ -288,7 +318,8 @@ const IdentifierModal: React.FC<IdentifierModalProps> = ({
             placeholder="请输入登录密码"
             autoComplete="new-password"
           />
-        </Form.Item>
+          </Form.Item>
+        )}
       </Form>
     </Modal>
   );

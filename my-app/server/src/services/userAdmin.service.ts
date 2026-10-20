@@ -509,15 +509,20 @@ export async function updateUser(
   // 与个人中心 updateIdentifiers 同款合并逻辑，避免「只改昵称」时把
   // 未传的邮箱/手机号误清空。
   //
-  // ★ 登录账号（用户名）是账号的身份标识，创建后不可修改 ——
-  //   这里**强制沿用库中现值**，即使调用方强行传入 username 也不生效，
-  //   从服务端杜绝「改账号」的可能（前端禁用只是体验，这里才是硬边界）。
+  // ★ 登录账号（用户名）一旦设置就不可修改 —— 已有值时**强制沿用库中现值**，
+  //   即使调用方强行传入 username 也不生效，从服务端杜绝「改账号」的可能
+  //   （前端禁用只是体验，这里才是硬边界）。
+  //   例外：验证码登录自动注册的账号 username 为 null，此时允许管理员
+  //   **设置一次**；写库后同样进入不可变状态。若不放开这个口子，
+  //   OTP 用户的用户名将永远是 null，成为无法补全的管理死角。
+  const usernameAfterMerge =
+    current.username !== null ? current.username : (input.username ?? null);
   let identifiers;
   try {
     identifiers = normalizeAndValidateIdentifiers({
       email: input.email !== undefined ? input.email : current.email,
       phone: input.phone !== undefined ? input.phone : current.phone,
-      username: current.username,
+      username: usernameAfterMerge,
     });
   } catch (error) {
     if (error instanceof IdentifierValidationError) {
