@@ -118,7 +118,24 @@ jobs:
             -e "ssh -i ~/.ssh/deploy_key -p ${{ secrets.SSH_PORT || 22 }} -o ConnectTimeout=20" \
             ./ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.DEPLOY_PATH || '/opt/careerai' }}/"
 
-      # ---------- 5. 构建 + 滚动重启 + 等待就绪 ----------
+      # ---------- 5. 部署前备份数据库（低成本保险，出问题能立刻回退数据）----------
+      # 为什么放在"构建之前"：构建+重启有几分钟窗口，备份要覆盖这个窗口之前的状态。
+      # 保留最近 10 份 predeploy_*.sql.gz，每日定时备份（03:00）仍然独立运行。
+      - name: Backup database (pre-deploy)
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "${{ secrets.SSH_PORT || 22 }}" \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" bash -s <<'REMOTE'
+          set -euo pipefail
+          mkdir -p /opt/backups
+          FILE="/opt/backups/predeploy_$(date +%Y%m%d_%H%M%S).sql.gz"
+          # 注意：这里用 set -o pipefail 保证 pg_dump 失败时不会生成"看起来正常"的空文件
+          docker exec careerai-postgres pg_dump -U postgres careerai | gzip > "$FILE"
+          # 只留最近 10 份部署前备份
+          ls -1t /opt/backups/predeploy_*.sql.gz | tail -n +11 | xargs -r rm -f
+          echo "备份完成: $(du -h "$FILE" | cut -f1)  $FILE"
+          REMOTE
+
+      # ---------- 6. 构建 + 滚动重启 + 等待就绪 ----------
       - name: Build and restart
         run: |
           ssh -i ~/.ssh/deploy_key -p "${{ secrets.SSH_PORT || 22 }}" \
@@ -153,10 +170,64 @@ jobs:
           docker compose ps --format 'table {{.Name}}\t{{.Image}}\t{{.Status}}'
           REMOTE
 
-      # ---------- 6. 公网冒烟 ----------
+      # ---------- 7. 公网冒烟 ----------
       - name: Smoke test
         run: |
           for p in /api/health / /login /resume-optimizer/; do
             printf '%-20s ' "$p"
             curl -s -o /dev/null -w 'HTTP %{http_code}\n' --max-time 15 "http://${{ secrets.SSH_HOST }}:8080$p"
           done
+
+      # ---------- 8. 结果通知（企业微信群机器人，可选）----------
+      # 配置方法：企业微信群 → 右上角「群机器人」→ 添加 → 复制 Webhook 地址
+      #           → 仓库 Settings → Secrets → 新建 NOTIFY_WEBHOOK（整条 URL）
+      # 未配置该 Secret 时自动跳过，不影响部署。
+      - name: Notify (WeCom)
+        if: always()
+        env:
+          WEBHOOK: ${{ secrets.NOTIFY_WEBHOOK }}
+          JOB_STATUS: ${{ job.status }}
+          APP_TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          if [ -z "${WEBHOOK:-}" ]; then
+            echo "未配置 NOTIFY_WEBHOOK，跳过通知"
+            exit 0
+          fi
+
+          case "$JOB_STATUS" in
+            success) ICON="✅"; TEXT="部署成功" ;;
+            cancelled) ICON="⚠️"; TEXT="部署被取消" ;;
+            *) ICON="❌"; TEXT="部署失败" ;;
+          esac
+
+          # 用 printf 逐行拼接，避免 heredoc 缩进污染 markdown
+          CONTENT=$(printf '%s **CareerAI %s**\n> 分支：%s\n> 提交：%s\n> 镜像：%s\n> 触发：%s\n> 详情：[查看流水线](%s/%s/actions/runs/%s)' \
+            "$ICON" "$TEXT" "$GITHUB_REF_NAME" "${GITHUB_SHA:0:7}" "$APP_TAG" "$GITHUB_ACTOR" \
+            "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID")
+          export CONTENT
+
+          # 用 python 生成 JSON，避免中文/换行转义踩坑
+          PAYLOAD=$(python3 -c "import json,os; print(json.dumps({'msgtype':'markdown','markdown':{'content':os.environ['CONTENT']}}))")
+          curl -s -X POST "$WEBHOOK" -H 'Content-Type: application/json' -d "$PAYLOAD" > /dev/null
+          echo "通知已发送（${JOB_STATUS}）"
+        continue-on-error: true
+
+      # ---------- 9. 流水线摘要（无需任何配置，Actions 页面直接可见）----------
+      - name: Write job summary
+        if: always()
+        run: |
+          {
+            echo "## 部署结果：${{ job.status }}"
+            echo ""
+            echo "| 项 | 值 |"
+            echo "|---|---|"
+            echo "| 镜像标签 | \`${{ steps.tag.outputs.tag }}\` |"
+            echo "| 分支 | \`${GITHUB_REF_NAME}\` |"
+            echo "| 提交 | \`${GITHUB_SHA:0:7}\` |"
+            echo "| 触发人 | ${GITHUB_ACTOR} |"
+            echo "| 服务 | \`${{ github.event.inputs.services || '全部' }}\` |"
+            echo ""
+            if [ "${{ job.status }}" != "success" ]; then
+              echo "> ⚠️ 部署未成功。回滚办法：改服务器 \`.env\` 里的 \`APP_TAG\` 为上一版标签后执行 \`docker compose up -d\`。"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
