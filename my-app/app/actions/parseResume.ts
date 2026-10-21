@@ -22,18 +22,30 @@
 import mammoth from 'mammoth';
 import PDFParser from 'pdf2json';
 
+/**
+ * pdf2json 事件载荷的最小结构声明。
+ *
+ * 【为什么不直接用 any】
+ * pdf2json 未提供精确类型，但「只声明实际用到的字段」比 any 更安全：
+ * 字段名写错会在编译期报错，而不是运行时静默 undefined。
+ */
+interface PdfChunk { T?: string }
+interface PdfTextItem { R?: PdfChunk[] }
+interface PdfPage { Texts?: PdfTextItem[] }
+interface PdfData { Pages?: PdfPage[] }
+
 function parsePDF(buffer: Buffer): Promise<string> {
   return new Promise((resolve, reject) => {
     const pdfParser = new PDFParser();
-    
-    pdfParser.on('pdfParser_dataReady', (pdfData: any) => {
+
+    pdfParser.on('pdfParser_dataReady', (pdfData: PdfData) => {
       const texts: string[] = [];
-      pdfData.Pages?.forEach((page: any) => {
-        page.Texts?.forEach((text: any) => {
-          text.R?.forEach((r: any) => {
+      pdfData.Pages?.forEach((page: PdfPage) => {
+        page.Texts?.forEach((text: PdfTextItem) => {
+          text.R?.forEach((r: PdfChunk) => {
             // ✅ 只有这里可能抛出 URIError，只给这里加
             try {
-              texts.push(decodeURIComponent(r.T));
+              texts.push(decodeURIComponent(r.T ?? ''));
             } catch {
               texts.push(r.T || '');
             }
@@ -42,7 +54,7 @@ function parsePDF(buffer: Buffer): Promise<string> {
       });
       resolve(texts.join(' '));
     });
-    
+
     pdfParser.on('pdfParser_dataError', reject);
     pdfParser.parseBuffer(buffer);
   });
@@ -72,8 +84,11 @@ export async function parseResume(formData: FormData): Promise<{ success: boolea
     }
 
     return { success: false, error: '不支持的文件格式，目前仅支持 TXT, PDF, DOCX' };
-  } catch (error: any) {
+  } catch (error) {
     console.error('File parsing error:', error);
-    return { success: false, error: '文件解析失败: ' + error.message };
+    return {
+      success: false,
+      error: '文件解析失败: ' + (error instanceof Error ? error.message : String(error)),
+    };
   }
 }

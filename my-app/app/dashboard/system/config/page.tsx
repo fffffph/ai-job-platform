@@ -196,40 +196,56 @@ const ConfigPage: React.FC = () => {
    *
    * 优先从 window 单例取（登录后已拉取），否则走接口；
    * force 用于保存/恢复后强制重新拉取。
+   *
+   * @param isCancelled - 可选的取消探针（effect 卸载清理时返回 true），
+   *                     防止组件卸载后 setState。
    */
-  const refreshConfigs = useCallback(async (force = false) => {
-    setLoading(true);
-    const cached = force ? null : getAppConfig();
-    let items: EffectiveConfigItem[] = [];
+  const refreshConfigs = useCallback(
+    async (force = false, isCancelled?: () => boolean) => {
+      setLoading(true);
+      const cached = force ? null : getAppConfig();
+      let items: EffectiveConfigItem[] = [];
 
-    if (cached && cached.configs.length > 0) {
-      items = cached.configs;
-    } else {
-      const res = await getConfigsApi();
-      if (res.success && res.data) {
-        items = res.data;
+      if (cached && cached.configs.length > 0) {
+        items = cached.configs;
       } else {
-        message.error(res.message || "读取系统配置失败");
+        const res = await getConfigsApi();
+        if (isCancelled?.()) return;
+        if (res.success && res.data) {
+          items = res.data;
+        } else {
+          message.error(res.message || "读取系统配置失败");
+        }
       }
-    }
 
-    setConfigs(items);
+      setConfigs(items);
 
-    // 同步权限（从 window 单例或重新加载）
-    const appState = await loadAppConfig(force);
-    setCanWrite(hasPermission(PERMISSIONS.CONFIG_UPDATE));
+      // 同步权限（从 window 单例或重新加载）
+      await loadAppConfig(force);
+      if (isCancelled?.()) return;
+      setCanWrite(hasPermission(PERMISSIONS.CONFIG_UPDATE));
 
-    // 若 window 单例里 configs 过期，写回最新
-    if (force && typeof window !== "undefined") {
-      const st = window.__APP_CONFIG__;
-      if (st) st.configs = items;
-    }
+      // 若 window 单例里 configs 过期，写回最新
+      if (force && typeof window !== "undefined") {
+        const st = window.__APP_CONFIG__;
+        if (st) st.configs = items;
+      }
 
-    setLoading(false);
-  }, [message]);
+      setLoading(false);
+    },
+    [message]
+  );
 
   useEffect(() => {
-    refreshConfigs(false);
+    // 包一层异步 IIFE：避免 effect 体内同步 setState 触发
+    // react-hooks/set-state-in-effect（与 role/menu/user 页同款写法）
+    let cancelled = false;
+    (async () => {
+      await refreshConfigs(false, () => cancelled);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [refreshConfigs]);
 
   // ========== 按分组组织数据 ==========

@@ -1,4 +1,5 @@
 'use client'
+/* eslint-disable react-hooks/set-state-in-effect -- shadcn/ui 上游生成代码，保持与官方同步，不改其内部实现 */
 
 import * as React from 'react'
 import useEmblaCarousel, {

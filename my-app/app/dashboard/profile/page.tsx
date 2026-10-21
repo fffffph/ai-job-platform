@@ -470,6 +470,10 @@ const ProfilePage = () => {
                       }}
                     >
                       {profile?.avatar ? (
+                        // 头像来源是任意远程 URL（用户上传/外链），next/image
+                        // 需要为每个远程域名配置 remotePatterns，收益低，
+                        // 这里保留原生 img（仅一处，不影响 LCP 主链路）
+                        // eslint-disable-next-line @next/next/no-img-element
                         <img
                           src={
                             profile.avatar.startsWith("http")
