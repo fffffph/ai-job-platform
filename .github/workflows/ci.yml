@@ -65,6 +65,12 @@ jobs:
     name: Build server (Express + Prisma)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Prisma 7 的 prisma.config.ts 加载时会校验 DATABASE_URL 是否存在，
+    # 缺失会直接抛 PrismaConfigEnvError（即使 generate 根本不连库）。
+    # 这里给一个占位串即可，与 Dockerfile 里的 ENV DATABASE_URL 保持同一做法；
+    # 真实连接由运行时 compose 注入，CI 不需要真数据库。
+    env:
+      DATABASE_URL: 'postgresql://postgres:postgres@localhost:5432/careerai?schema=public'
     steps:
       - uses: actions/checkout@v4
 
