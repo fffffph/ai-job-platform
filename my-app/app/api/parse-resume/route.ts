@@ -26,6 +26,15 @@ import mammoth from 'mammoth';
 import PDFParser from 'pdf2json';
 
 /**
+ * pdf2json 事件载荷的最小结构声明。
+ * 库本身未提供精确类型，这里只声明实际用到的字段，代替 any。
+ */
+interface PdfChunk { T?: string }
+interface PdfTextItem { R?: PdfChunk[] }
+interface PdfPage { Texts?: PdfTextItem[] }
+interface PdfData { Pages?: PdfPage[] }
+
+/**
  * 解析 PDF 文件，提取所有页面的文本内容
  *
  * pdf2json 库将 PDF 解析为结构化 JSON 数据（PdfData），
@@ -40,16 +49,18 @@ function parsePDF(buffer: Buffer): Promise<string> {
     const pdfParser = new PDFParser();
 
     // 监听解析成功事件
-    pdfParser.on('pdfParser_dataReady', (pdfData: any) => {
+    // 【类型说明】pdf2json 未提供精确事件载荷类型，这里声明用到的最小结构，
+    // 代替 any：字段名写错会在编译期报错，而不是运行时静默 undefined。
+    pdfParser.on('pdfParser_dataReady', (pdfData: PdfData) => {
       const texts: string[] = [];
 
       // 遍历所有页面，提取文本片段
-      pdfData.Pages?.forEach((page: any) => {
-        page.Texts?.forEach((text: any) => {
-          text.R?.forEach((r: any) => {
+      pdfData.Pages?.forEach((page: PdfPage) => {
+        page.Texts?.forEach((text: PdfTextItem) => {
+          text.R?.forEach((r: PdfChunk) => {
             // decodeURIComponent 可能对某些特殊编码抛出 URIError
             try {
-              texts.push(decodeURIComponent(r.T));
+              texts.push(decodeURIComponent(r.T ?? ''));
             } catch {
               texts.push(r.T || '');
             }
@@ -132,13 +143,15 @@ export async function POST(req: Request) {
       },
       { status: 400 }
     );
-  } catch (error: any) {
+  } catch (error) {
     console.error('[api/parse-resume] 文件解析失败:', error);
 
     return NextResponse.json(
       {
         success: false,
-        error: '文件解析失败: ' + (error.message || '未知错误'),
+        error:
+          '文件解析失败: ' +
+          ((error instanceof Error && error.message) || '未知错误'),
       },
       { status: 500 }
     );

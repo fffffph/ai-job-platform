@@ -96,8 +96,17 @@ const MicroAppLoader: React.FC = () => {
     /** 是否已判定最终结果（成功/失败）：避免 Promise 回调与超时兜底重复置位 */
     let settled = false;
 
-    setStatus('loading');
-    setErrorMsg('');
+    /**
+     * 置 loading 的同步 setState 放进微任务：
+     * react-hooks/set-state-in-effect 禁止 effect 体内同步 setState（级联渲染）。
+     * 微任务在绘制前执行，对 UI 语义零影响；disposed 守卫覆盖 StrictMode
+     * 「mount → cleanup → mount」中被作废的那一轮。
+     */
+    queueMicrotask(() => {
+      if (disposed) return;
+      setStatus('loading');
+      setErrorMsg('');
+    });
 
     let app: MicroApp | null = null;
 
@@ -108,6 +117,7 @@ const MicroAppLoader: React.FC = () => {
     const LOAD_TIMEOUT_MS = 10000;
 
     /** 超时定时器句柄（先声明，供 fail 内部清理，避免 TDZ） */
+    // eslint-disable-next-line prefer-const -- 先声明后在下方 setTimeout 处赋值，const 无法满足该结构
     let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
 
     /**
@@ -315,7 +325,8 @@ const MicroAppLoader: React.FC = () => {
       const container = document.getElementById('micro-app-container');
       if (container) container.innerHTML = '';
     };
-  }, [retryKey]); // retryKey 变化时重新加载（重试按钮触发）
+    // retryKey 变化时重新加载（重试按钮触发）；isDev 是环境常量，列全依赖消除 lint 告警
+  }, [retryKey, isDev]);
 
   /**
    * 重试加载：清空容器残留 DOM，并让 useEffect 重新执行。

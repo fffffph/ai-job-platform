@@ -128,30 +128,56 @@ const RoleManagePage: React.FC = () => {
   const [checkedKeys, setCheckedKeys] = useState<React.Key[]>([]);
   const [halfCheckedKeys, setHalfCheckedKeys] = useState<React.Key[]>([]);
 
-  /** 加载角色 + 菜单 + 权限 */
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    await loadAppConfig();
-    setCanCreate(hasPermission(PERMISSIONS.ROLE_CREATE));
-    setCanUpdate(hasPermission(PERMISSIONS.ROLE_UPDATE));
-    setCanDelete(hasPermission(PERMISSIONS.ROLE_DELETE));
-    setCanGrant(hasPermission(PERMISSIONS.ROLE_GRANT));
+  /**
+   * 拉取数据（所有 setState 均在 await 之后）。
+   *
+   * 【为什么 effect 里要包一层 IIFE + cancelled 标记】
+   * React Compiler 的 react-hooks/set-state-in-effect 规则禁止在 effect
+   * 体内**直接调用**含 setState 的函数（会引发级联渲染）。包一层异步 IIFE
+   * 后 setState 全部落在微任务里，且 cancelled 标记防止组件卸载后 setState。
+   * （与 user/page.tsx 的写法保持一致。）
+   *
+   * @param isCancelled - 可选的取消探针，effect 卸载清理时返回 true
+   */
+  const loadData = useCallback(
+    async (isCancelled?: () => boolean) => {
+      await loadAppConfig();
+      if (isCancelled?.()) return;
+      setCanCreate(hasPermission(PERMISSIONS.ROLE_CREATE));
+      setCanUpdate(hasPermission(PERMISSIONS.ROLE_UPDATE));
+      setCanDelete(hasPermission(PERMISSIONS.ROLE_DELETE));
+      setCanGrant(hasPermission(PERMISSIONS.ROLE_GRANT));
 
-    const [roleRes, menuRes] = await Promise.all([getRoleListApi(), getMenuTreeApi()]);
-    if (roleRes.success && roleRes.data) {
-      setRoles(roleRes.data);
-    } else {
-      message.error(roleRes.message || "读取角色列表失败");
-    }
-    if (menuRes.success && menuRes.data) {
-      setMenuItems(menuRes.data);
-    }
-    setLoading(false);
-  }, [message]);
+      const [roleRes, menuRes] = await Promise.all([getRoleListApi(), getMenuTreeApi()]);
+      if (isCancelled?.()) return;
+      if (roleRes.success && roleRes.data) {
+        setRoles(roleRes.data);
+      } else {
+        message.error(roleRes.message || "读取角色列表失败");
+      }
+      if (menuRes.success && menuRes.data) {
+        setMenuItems(menuRes.data);
+      }
+      setLoading(false);
+    },
+    [message]
+  );
+
+  /** 手动刷新（按钮用）：先亮 loading 再拉数据 */
+  const refresh = useCallback(() => {
+    setLoading(true);
+    void loadData();
+  }, [loadData]);
 
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    let cancelled = false;
+    (async () => {
+      await loadData(() => cancelled);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [loadData]);
 
   const treeData = useMemo(() => buildMenuTreeData(menuItems), [menuItems]);
 

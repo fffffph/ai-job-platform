@@ -361,15 +361,20 @@ export interface IdentifierCheckResult {
  *   但合并后至少保留一个（由 identifier.ts 统一校验）。
  */
 export interface UpdateUserInput {
+  /**
+   * 用户名（登录账号）。
+   *
+   * 【为什么现在提供但仅限「首次设置」】
+   * 验证码登录自动注册的账号 username 为 null —— 若编辑接口完全不提供
+   * username，管理员将永远无法为这类用户补全账号。现在的规则是：
+   * - 目标用户已有用户名 → 即使传了也会被服务层强制沿用现值（不可修改）；
+   * - 目标用户没有用户名 → 允许设置一次，写库后同样进入不可变状态。
+   */
+  username?: string | null;
   /** 邮箱（登录标识，可选） */
   email?: string | null;
   /** 手机号（登录标识，可选） */
   phone?: string | null;
-  /**
-   * 注意：编辑接口**故意不提供 username 字段**。
-   * 登录账号（用户名）是账号的身份标识，创建后不可修改，
-   * 避免「改了账号导致他人按原账号找不回」等归属混乱。
-   */
   /** 昵称（可选，null 表示清空） */
   name?: string | null;
   /** 管理员备注（可选，null 表示清空） */

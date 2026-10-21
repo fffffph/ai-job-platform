@@ -20,7 +20,7 @@
  *      → 写入 window.__APP_CONFIG__ → MainLayout 消费 menus 渲染侧边栏。
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { Layout, Menu, Button, App, Switch, Space } from 'antd';
 import type { MenuProps } from 'antd';
 import {
@@ -40,6 +40,9 @@ import type { MenuTreeNode } from '@/api';
 
 const { Header, Content, Sider } = Layout;
 
+/** 空订阅器：useSyncExternalStore 只用来回答「我在不在客户端」，无需真实订阅 */
+const emptySubscribe = () => () => {};
+
 /**
  * 默认降级菜单（接口失败或返回空时使用）。
  *
@@ -58,17 +61,46 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { theme, setTheme } = useTheme();
   const { message } = App.useApp();
-  const [mounted, setMounted] = useState(false);
+  /**
+   * 客户端挂载检测（SSR 水合专用，避免 effect 内 setState）。
+   * 与 dashboard/layout.tsx 的 useMounted 同款：useSyncExternalStore
+   * 服务端快照 false / 客户端快照 true，无需 setState。
+   */
+  const mounted = useSyncExternalStore(
+    emptySubscribe,
+    () => true,
+    () => false
+  );
   const [collapsed, setCollapsed] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
 
   // 侧边栏菜单树（默认降级菜单，加载成功后替换为后端菜单）
   const [menus, setMenus] = useState<MenuTreeNode[]>(DEFAULT_MENUS);
-  // 受控展开的目录 key 列表
-  const [openKeys, setOpenKeys] = useState<string[]>([]);
+  // 用户手动展开/收起的目录 key（当前路由要求展开的目录由派生逻辑并入，不在此存）
+  const [manualOpenKeys, setManualOpenKeys] = useState<string[]>([]);
 
+  /**
+   * 移动端状态初始化（必做）。
+   *
+   * 【为什么不能只靠 Sider 的 onBreakpoint】
+   * antd Sider 的 onBreakpoint 回调只在「跨越」断点时触发；手机用户直接
+   * 以窄视口打开页面（首屏加载、或整页刷新）时不会回调，collapsed 保持
+   * 初始值 false —— 侧边栏会以展开态浮在内容上遮挡列表（移动端回归实测）。
+   * 这里用 matchMedia 在挂载时做一次初始检测并主动收起，再监听后续变化。
+   * 断点口径与 Sider breakpoint="lg" 一致：lg = 992px。
+   */
   useEffect(() => {
-    setMounted(true);
+    const mql = window.matchMedia('(max-width: 991.98px)');
+    const apply = () => {
+      const mobile = mql.matches;
+      setIsMobile(mobile);
+      if (mobile) {
+        setCollapsed(true); // 手机端默认收起，点汉堡按钮才展开（浮层+遮罩）
+      }
+    };
+    apply();
+    mql.addEventListener('change', apply);
+    return () => mql.removeEventListener('change', apply);
   }, []);
 
   // 登录后拉取菜单树（消费 window 单例；已有缓存直接命中）
@@ -105,10 +137,32 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
     [pathname, menus]
   );
 
-  // 路由变化时，保证当前路由的祖先目录处于展开态（不清空用户手动展开项）
-  useEffect(() => {
-    setOpenKeys((prev) => Array.from(new Set([...prev, ...routeOpenKeys])));
-  }, [routeOpenKeys]);
+  /**
+   * 最终展开集合 = 用户手动展开 ∪ 当前路由要求展开。
+   *
+   * 【为什么用派生而不是 effect 合并】
+   * 原实现在 effect 里 setOpenKeys 合并 routeOpenKeys —— effect 体内同步
+   * setState 会触发 react-hooks/set-state-in-effect（级联渲染告警）。
+   * 改为 useMemo 派生后零 effect：路由要求的目录始终展开、用户手动展开项
+   * 也保留；唯一副作用在 onOpenChange 事件回调里（合法位置）。
+   * 行为差异：当前路由所在的目录无法被手动收起（会保持展开），语义更稳。
+   */
+  const openKeys = useMemo(
+    () => Array.from(new Set([...manualOpenKeys, ...routeOpenKeys])),
+    [manualOpenKeys, routeOpenKeys]
+  );
+
+  /**
+   * 传给 Menu 的展开集合（折叠态强制清空）。
+   *
+   * 【为什么折叠态必须传空数组】
+   * Sider 折叠后 antd Menu 进入 inline-collapsed 模式，此时受控 openKeys
+   * 里的目录会被渲染成「悬浮弹层」挂在侧栏旁边。若仍传入路由要求的
+   * 展开项（如「系统设置」），弹层会在无人操作时直接盖在内容上 ——
+   * 移动端回归实测到的「菜单浮层遮挡用户列表」就是这个机制。
+   * 折叠态清空后，子菜单弹层只在用户主动点父节点时出现。
+   */
+  const menuOpenKeys = collapsed ? [] : openKeys;
 
   const handleLogout = () => {
     removeToken(); // 清除登录 token（关键：否则退出后点浏览器返回又回到登录态）
@@ -170,8 +224,8 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
           theme={mounted && !isDark ? 'light' : 'dark'}
           mode="inline"
           selectedKeys={selectedKeys}
-          openKeys={openKeys}
-          onOpenChange={(keys) => setOpenKeys(keys as string[])}
+          openKeys={menuOpenKeys}
+          onOpenChange={(keys) => setManualOpenKeys(keys as string[])}
           onClick={handleMenuClick}
           className="bg-transparent border-none"
           items={items}

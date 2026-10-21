@@ -239,7 +239,8 @@ adminUserRouter.put(
  * 【边界】
  * - 不含角色（走 /:id/roles）、不含状态（走 /:id/status）；
  * - 邮箱/手机号 PATCH 语义：undefined=保持，""/null=清空（至少保留一个）；
- * - ★ 不含 username：登录账号是身份标识，创建后不可修改（service 层强制沿用现值）。
+ * - username 仅在目标用户尚未设置时允许提交（验证码自动注册账号补设一次）；
+ *   已有用户名的用户即使传了也会被 service 层强制沿用现值（不可修改）。
  */
 adminUserRouter.put(
   "/:id",
@@ -251,6 +252,10 @@ adminUserRouter.put(
       const body = (req.body ?? {}) as Record<string, unknown>;
 
       await userAdminService.updateUser(id, {
+        username:
+          body.username === undefined
+            ? undefined
+            : (body.username as string | null),
         email: body.email === undefined ? undefined : (body.email as string | null),
         phone: body.phone === undefined ? undefined : (body.phone as string | null),
         name: body.name === undefined ? undefined : (body.name as string | null),

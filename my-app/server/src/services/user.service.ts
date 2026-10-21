@@ -42,6 +42,16 @@ export interface UserProfile {
   name: string | null;
   avatar: string | null;
   bio: string | null;
+  /**
+   * 是否已设置登录密码。
+   *
+   * 【为什么需要这个字段】
+   * 验证码登录自动注册的账号 password 为 null（无密码），前端需要据此：
+   * - 把「修改密码」表单切成「首次设置密码」形态（不要求旧密码）；
+   * - 把「修改登录标识」弹窗切成引导形态（先设置密码，再改标识）。
+   * 注意这里只暴露布尔值，密码哈希本身绝不外发。
+   */
+  hasPassword: boolean;
   /** 是否需要强制修改密码（管理员代建账号为 true） */
   mustChangePassword: boolean;
   /** 最后登录时间（审计信息，个人中心「登录与安全」展示） */
@@ -75,6 +85,33 @@ const PUBLIC_USER_SELECT = {
   createdAt: true,
 } as const;
 
+/**
+ * 在公开字段基础上额外查出密码哈希的 select。
+ *
+ * 【为什么单独一份】
+ * PUBLIC_USER_SELECT 严格「不含密码」；但前端需要 hasPassword 布尔值，
+ * 所以这里查出哈希 → 由 toPublicProfile 换算成布尔后立即丢弃，
+ * 哈希本身不出现在任何接口响应里。
+ */
+const PROFILE_SELECT_WITH_PASSWORD = {
+  ...PUBLIC_USER_SELECT,
+  password: true,
+} as const;
+
+/**
+ * 把「含密码哈希」的查询结果转成对外的 UserProfile。
+ *
+ * 唯一职责：password → hasPassword 布尔映射，映射后哈希立即丢弃。
+ * 所有对外的 profile 查询/更新出口（getProfile / updateProfile /
+ * updateIdentifiers）统一走这里，避免某处漏映射把哈希带出去。
+ */
+function toPublicProfile(
+  user: { password: string | null } & Omit<UserProfile, "hasPassword">
+): UserProfile {
+  const { password, ...rest } = user;
+  return { ...rest, hasPassword: Boolean(password) };
+}
+
 // ========== 业务函数 ==========
 
 /**
@@ -90,15 +127,16 @@ const PUBLIC_USER_SELECT = {
 export async function getProfile(userId: string): Promise<UserProfile> {
   const user = await prisma.user.findFirst({
     where: { id: userId, deletedAt: null },
-    // 显式选择返回字段，确保 password 不被包含
-    select: PUBLIC_USER_SELECT,
+    // 显式选择返回字段：密码哈希会被 toPublicProfile 换算成
+    // hasPassword 布尔值后丢弃，绝不会出现在响应里
+    select: PROFILE_SELECT_WITH_PASSWORD,
   });
 
   if (!user) {
     throw new Error("用户不存在");
   }
 
-  return user;
+  return toPublicProfile(user);
 }
 
 /**
@@ -123,10 +161,10 @@ export async function updateProfile(
       ...(updates.name !== undefined ? { name: updates.name } : {}),
       ...(updates.bio !== undefined ? { bio: updates.bio } : {}),
     },
-    select: PUBLIC_USER_SELECT,
+    select: PROFILE_SELECT_WITH_PASSWORD,
   });
 
-  return user;
+  return toPublicProfile(user);
 }
 
 // ============================================================
@@ -143,7 +181,7 @@ export interface UpdateIdentifiersInput {
    * 改登录标识是账号劫持的最高危操作：谁拿到别人的一次未锁屏电脑，
    * 就能把邮箱换成自己的、再走「忘记密码」永久接管账号。
    * 用「输入当前密码」做二次确认，是当前成本最低、收益最高的折中。
-   * 无密码账号（管理员代建 / 验证码注册）跳过硬校验。
+   * 无密码账号（验证码注册）会被步骤 2 明确拒绝，引导先设置密码。
    */
   password?: string;
   /**
@@ -179,7 +217,7 @@ export interface UpdateIdentifiersResult {
  *
  * 【安全流程】
  * 1. 校验账号可用（未软删除）
- * 2. 若账号已有密码 → 必须提供当前密码并比对通过
+ * 2. 必须提供当前密码并比对通过（无密码账号直接拒绝，引导先设置密码）
  * 3. 与库中现有值合并（未传的字段保持原值）→ 归一化 + 格式校验
  * 4. 唯一性校验（**排除自己**，否则未改动的标识会命中自己）
  * 5. 写库，三个标识整体覆盖
@@ -224,14 +262,23 @@ export async function updateIdentifiers(
   }
 
   // ---------- 步骤 2：当前密码确认 ----------
-  if (current.password) {
-    if (!input.password) {
-      throw new Error("请输入当前密码以确认身份");
-    }
-    const ok = await bcrypt.compare(input.password, current.password);
-    if (!ok) {
-      throw new Error("当前密码不正确");
-    }
+  // 【安全修复】无密码账号（验证码登录自动注册）旧实现直接跳过确认：
+  // - 前端强制要求填「当前密码」，但账号根本没有密码，用户无所适从；
+  // - 更严重的是后端不做任何比对，**随便填什么密码都放行**
+  //   （用户实测填 admin 的密码也能改成功）——等于改标识零身份确认。
+  // 现改为明确拒绝：先在「登录与安全」设置密码，之后统一用密码确认身份。
+  // 「首次设置密码」本身走 changePassword，后端对无密码账号免旧密码校验。
+  if (!current.password) {
+    throw new Error(
+      "当前账号尚未设置密码，请先在「个人中心 → 登录与安全」设置密码，再修改登录标识"
+    );
+  }
+  if (!input.password) {
+    throw new Error("请输入当前密码以确认身份");
+  }
+  const passwordOk = await bcrypt.compare(input.password, current.password);
+  if (!passwordOk) {
+    throw new Error("当前密码不正确");
   }
 
   // ---------- 步骤 3：与现值合并 → 归一化 + 格式校验 + 「至少一个标识」 ----------
@@ -255,16 +302,18 @@ export async function updateIdentifiers(
       phone: identifiers.phone,
       username: identifiers.username,
     },
-    select: PUBLIC_USER_SELECT,
+    select: PROFILE_SELECT_WITH_PASSWORD,
   });
+
+  const publicProfile = toPublicProfile(profile);
 
   // ---------- 步骤 6：邮箱变更时重签 Token，保持 payload 与库一致 ----------
   const token =
-    profile.email !== current.email
-      ? generateToken(userId, profile.email, current.tokenVersion)
+    publicProfile.email !== current.email
+      ? generateToken(userId, publicProfile.email, current.tokenVersion)
       : undefined;
 
-  return { profile, token };
+  return { profile: publicProfile, token };
 }
 
 /**

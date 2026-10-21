@@ -3,21 +3,36 @@
 import { MainLayout } from '@/components/layout/MainLayout';
 import { ConfigProvider, App, theme as antdTheme } from 'antd';
 import { useTheme } from 'next-themes';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { useRouter } from 'next/navigation';
 import { getToken } from '@/api';
 import { loadAppConfig } from '@/lib/app-config';
 
+/** 空订阅器：useSyncExternalStore 只要它回答「我在不在客户端」，无需真实订阅 */
+const emptySubscribe = () => () => {};
+
+/**
+ * 客户端挂载检测（SSR 水合专用）。
+ *
+ * 【为什么不用 setMounted(true) 的 effect】
+ * React Compiler 的 react-hooks/set-state-in-effect 禁止 effect 内同步
+ * setState（会引发级联渲染）。useSyncExternalStore 三参形态是官方推荐的
+ * 「mounted」替代：服务端快照返回 false、客户端快照返回 true，
+ * 水合完成后自动切换，无需 setState。
+ */
+const useMounted = () =>
+  useSyncExternalStore(
+    emptySubscribe,
+    () => true,
+    () => false
+  );
+
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { theme } = useTheme();
   const router = useRouter();
-  const [mounted, setMounted] = useState(false);
+  const mounted = useMounted();
   // 是否已通过登录校验（客户端路由守卫用，未认证前不渲染内容）
   const [authed, setAuthed] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
 
   // ---------- 客户端路由守卫 ----------
   // 所有 /dashboard/* 页面都受此守卫保护：无 token 一律跳登录页。

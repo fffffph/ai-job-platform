@@ -280,8 +280,10 @@ const ProfilePage = () => {
   };
 
   // ---------- 修改密码 ----------
+  // 无密码账号（验证码注册）走「首次设置密码」形态：表单不渲染旧密码框，
+  // oldPassword 为 undefined，后端对无密码账号免旧密码校验。
   const handleChangePassword = async (values: {
-    oldPassword: string;
+    oldPassword?: string;
     newPassword: string;
     confirmPassword: string;
   }) => {
@@ -292,7 +294,7 @@ const ProfilePage = () => {
 
     setPasswordLoading(true);
     const res = await changePassword({
-      oldPassword: values.oldPassword,
+      oldPassword: values.oldPassword ?? "",
       newPassword: values.newPassword,
     });
 
@@ -315,7 +317,16 @@ const ProfilePage = () => {
         setToken(res.data.token, isTokenRemembered());
         // 清空密码表单，避免敏感明文残留在受控输入框里
         passwordForm.resetFields();
-        msg.success("密码修改成功，其它设备已自动下线");
+        // 首次设置密码后本地同步 hasPassword：UI 立即切换回「已设置」形态，
+        // 无需整页刷新重新拉 profile
+        if (profile && !profile.hasPassword) {
+          setProfile({ ...profile, hasPassword: true });
+        }
+        msg.success(
+          profile?.hasPassword === false
+            ? "密码设置成功，之后可用「账号/邮箱/手机号 + 密码」登录"
+            : "密码修改成功，其它设备已自动下线"
+        );
       } else {
         // 理论上不会出现的兜底分支：接口成功但没返回新 Token，
         // 此时本地 Token 必然已被吊销，只能按旧逻辑送回登录页。
@@ -459,6 +470,10 @@ const ProfilePage = () => {
                       }}
                     >
                       {profile?.avatar ? (
+                        // 头像来源是任意远程 URL（用户上传/外链），next/image
+                        // 需要为每个远程域名配置 remotePatterns，收益低，
+                        // 这里保留原生 img（仅一处，不影响 LCP 主链路）
+                        // eslint-disable-next-line @next/next/no-img-element
                         <img
                           src={
                             profile.avatar.startsWith("http")
@@ -653,19 +668,34 @@ const ProfilePage = () => {
                 </div>
                 <div className="id-row-main">
                   <div className="id-row-label">密码</div>
-                  <div className="id-row-value">••••••••</div>
+                  <div className="id-row-value">
+                    {/* 无密码账号（验证码注册）如实显示，避免「已设置」误导 */}
+                    {profile?.hasPassword === false ? "未设置（仅可验证码登录）" : "••••••••"}
+                  </div>
                 </div>
-                <Tag color="success" style={{ margin: 0, flexShrink: 0 }}>
-                  已设置
-                </Tag>
+                {/* 标签状态跟随 hasPassword：未设置用警示色如实标注 */}
+                {profile?.hasPassword === false ? (
+                  <Tag color="warning" style={{ margin: 0, flexShrink: 0 }}>
+                    未设置
+                  </Tag>
+                ) : (
+                  <Tag color="success" style={{ margin: 0, flexShrink: 0 }}>
+                    已设置
+                  </Tag>
+                )}
                 {/* 入口从文字链接提升为按钮：改密码是高频安全操作，
-                    藏在 type="link" 的文字里可发现性太低 */}
+                    藏在 type="link" 的文字里可发现性太低；
+                    无密码账号的按钮文案为「设置密码」，语义是首次设置 */}
                 <Button
                   size="small"
                   onClick={() => setPasswordVisible((v) => !v)}
                   style={{ flexShrink: 0 }}
                 >
-                  {passwordVisible ? "收起" : "修改"}
+                  {passwordVisible
+                    ? "收起"
+                    : profile?.hasPassword === false
+                      ? "设置密码"
+                      : "修改"}
                 </Button>
               </div>
 
@@ -690,16 +720,24 @@ const ProfilePage = () => {
                     onFinish={handleChangePassword}
                     style={{ maxWidth: 400 }}
                   >
-                    <Form.Item
-                      name="oldPassword"
-                      label="当前密码"
-                      rules={[{ required: true, message: "请输入当前密码" }]}
-                    >
-                      <Input.Password
-                        prefix={<LockOutlined />}
-                        placeholder="输入当前密码"
-                      />
-                    </Form.Item>
+                    {/*
+                      「当前密码」仅在已设置密码时渲染。
+                      验证码登录自动注册的账号没有密码，后端 changePassword
+                      对无密码账号免旧密码校验（语义是「首次设置密码」），
+                      前端同步隐藏旧密码框，避免「我没有密码却要我填」的死锁。
+                    */}
+                    {profile?.hasPassword !== false && (
+                      <Form.Item
+                        name="oldPassword"
+                        label="当前密码"
+                        rules={[{ required: true, message: "请输入当前密码" }]}
+                      >
+                        <Input.Password
+                          prefix={<LockOutlined />}
+                          placeholder="输入当前密码"
+                        />
+                      </Form.Item>
+                    )}
 
                     <Form.Item
                       name="newPassword"

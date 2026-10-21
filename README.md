@@ -216,8 +216,10 @@ docker compose up -d --build
 
 | 前缀 | 主要端点 | 说明 |
 |---|---|---|
-| `/api/auth` | `POST /register` `POST /login` | 注册 / 登录 |
-| `/api/user` | `GET/PUT /profile` `PUT /password` | 用户资料 / 改密码 |
+| `/api/auth` | `POST /register` `POST /login` | 密码注册 / 登录（统一账号入口：用户名/邮箱/手机号） |
+| `/api/auth` | `GET /captcha-status` `GET /captcha` `POST /send-code` | 图形验证码（预检+生成）/ 发送邮件验证码 |
+| `/api/auth` | `POST /login-by-code` `POST /reset-password` | 验证码登录（未注册自动建号）/ 忘记密码重置 |
+| `/api/user` | `GET/PUT /profile` `PUT /password` `PUT /identifiers` | 用户资料 / 改密码 / 修改登录标识（密码二次确认） |
 | `/api/user` | `GET/PUT/DELETE /deepseek-key`、`POST /deepseek-key/test` | DeepSeek Key 配置 |
 | `/api/user` | `GET/PUT/DELETE /siliconflow-key`、`POST /siliconflow-key/test` | SiliconFlow Key 配置 |
 | `/api/resume` | `POST /parse` `POST /optimize` `POST /chat` | 简历解析 / 优化 / 对话 |
@@ -229,8 +231,34 @@ docker compose up -d --build
 | `/api/config` | `GET /` `GET /:key`（登录可读）；`POST /` `PUT /` `PUT /:key` `DELETE /` `DELETE /:key`（需 `system:config:update`） | 系统配置中心 |
 | `/api/menu` | `GET /my`（登录）；`GET /tree` `POST /` `PUT /:id` `DELETE /:id`（菜单管理权限码） | 动态菜单 + 菜单管理 |
 | `/api/role` | `GET /list` `GET /:id/menus` `POST /` `PUT /:id` `DELETE /:id` `PUT /:id/menus` | 角色管理 + 菜单绑定 |
-| `/api/user` | `GET /list` `PUT /:id/roles` `PUT /:id/status` | 用户管理（分配角色 / 停用启用） |
+| `/api/user` | `GET /list` `PUT /:id` `PUT /:id/reset-password` `DELETE /:id` `PUT /:id/roles` `PUT /:id/status` | 用户管理（编辑 / 重置密码 / 软删除 / 分配角色 / 停用启用） |
 | `/api` | `GET /health` | 健康检查 |
+
+## 🔑 认证与账号安全
+
+**统一账号模型**：`User.email / phone / username` 三个登录标识均可空（`@unique`），判定收敛在 `lib/identifier.ts` 单一事实源——含 `@` 是邮箱、匹配 `^1[3-9]\d{9}$` 是手机号、其余是用户名（禁纯数字防撞手机号）。查重只按判定出的单一字段精确匹配，不做 OR 模糊查询；唯一性硬约束下沉数据库（`lower(email)/lower(username)` 函数式唯一索引，`npm run db:indexes` 幂等创建）。
+
+**登录方式**：
+- **密码登录**：统一入口三标识任输，bcrypt 加盐存储；
+- **验证码登录**：邮箱验证码（SMTP 真实发送，品牌化 HTML 模板），未注册可按开关自动建号（无密码账号，仅可验证码登录）；
+- **忘记密码**：验证码验证身份后重置，`tokenVersion++` 吊销所有旧 Token。
+
+**安全分层**：
+
+| 层 | 手段 |
+|---|---|
+| 传输 | HTTPS/TLS（生产经 nginx，开发环境 localhost） |
+| 存储 | bcrypt（cost 10）加盐哈希，密码哈希绝不外发 |
+| 验证码 | 只存 `HMAC-SHA256(码, secret+target)`，一次性消费 + 场景隔离 + 错误 5 次作废 |
+| 会话 | JWT + `tokenVersion` 主动吊销（改密/重置后旧 Token 立即 401） |
+| 闸门 | 强制改密中间件（未改密账号只能访问改密接口） |
+| 用户密钥 | API Key 走 AES-256-GCM 加密落库 |
+
+**无密码账号规则**：验证码自动注册的账号（`password=null`）修改登录标识会被明确拒绝，引导先「设置密码」（首设免旧密码）；profile 接口返回 `hasPassword` 布尔供前端分流 UI。
+
+**验证码频控**：同标识 60s 冷却 / 1h 5 条 + 1d 10 条 / 同 IP 1d 20 条；图形验证码分级触发（同 IP 当日第 3 次起），前端预检接口提前展示（先验证后获取）。发送通道 Provider 抽象（`MAIL_PROVIDER=console|smtp`），开发期控制台 Mock、生产切真实 SMTP 只改环境变量。
+
+> 设计文档见 `docs/design-auth-and-user-management.md`。
 
 ## 🔐 权限体系（RBAC）
 
@@ -276,6 +304,15 @@ docker compose up -d --build
 | 基础设施层 | `ai/llm/` `ai/stream/` `ai/trace/` | DeepSeek / Embedding、SSE 网关、Trace 埋点 |
 
 三大 AI 范式落地：**简历优化 → Agent 编排**、**知识库 → RAG**、**职位发现 → ReAct 自主规划**。每一步决策（调了什么工具、检索到什么、生成什么）都通过 AI Trace 面板透明可见，符合「学习导向」的设计目标。
+
+## ✅ 质量保障
+
+| 项目 | 说明 |
+|---|---|
+| **全链路冒烟** | `bash scripts/smoke.sh` 一键跑 18 项断言：注册 → 登录 → 改密（旧 Token 吊销验证）→ 改标识（密码确认）→ admin 用户 CRUD（编辑/重置/软删除）→ 发码频控，测试账号自动清理 |
+| **Lint 零告警** | 全项目 ESLint（含 React Compiler 规则 `set-state-in-effect` / `purity`）0 问题；shadcn 组件库文件带豁免注释保持与上游同步 |
+| **移动端回归** | 375px 视口走查 8 个关键页面；修复 2 个真实 bug：Sider 断点回调首屏不触发、inline-collapsed 菜单弹层遮挡内容 |
+| **TypeScript** | 前后端 `tsc --noEmit` 零错误，pdf2json 等松散类型用最小结构声明替代 `any` |
 
 ## 📄 许可证
 
