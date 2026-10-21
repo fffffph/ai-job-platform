@@ -1,20 +1,27 @@
 # ============================================================
-# .github/workflows/deploy.yml —— GitHub Actions 自动发版
+# .github/workflows/deploy.yml —— CD（持续部署，只在"准备上线"时触发）
 # ============================================================
 #
-# 【触发方式一：push 自动发版】
-#   推送到 main / dev_20261018 时自动部署对应分支的代码。
-#   想加别的分支，往 branches 列表里加（也支持通配符，如 'release-*'）。
+# 【和 ci.yml 的分工】
+#   ci.yml     = 每次 push/PR 都跑，只编译验证，**不碰服务器**
+#   deploy.yml = 本文件，只有以下三种情况才部署：
+#       ① push 到 main
+#       ② 打 v* 标签（如 v1.2.0）
+#       ③ Actions 页手动 Run workflow（可指定任意分支 + 指定服务）
+#   所以：在临时分支（如 dev_20261018）上 push **不会**自动上线，
+#         想上线就手动跑一次，或合并到 main。
 #
-# 【触发方式二：手动运行，可指定分支】
-#   Actions 页 → Deploy to Lighthouse → Run workflow：
-#   - Branch 下拉框选任意分支（要发哪个分支就选哪个）
-#   - services 填 server / web / subapp（空格分隔，留空=全量）
-#   注意：下拉框只列出**已包含此 workflow 文件**的分支，
-#         所以 workflow 第一次必须先随某个分支推上去。
+# 【为什么这样切】
+#   CI 管"代码对不对"，CD 管"什么时候上生产"，两件事不能混。
+#   临时分支天天 push，如果每次都部署，生产就成了试验田。
+#
+# 【手动发临时分支】
+#   Actions → Deploy to Lighthouse → Run workflow：
+#   - Branch 下拉选分支（要发哪个选哪个）
+#   - services 填 server / web / subapp（留空=全量）
 #
 # 【它做的事】
-#   1. checkout 指定分支，算出带 git 提交号的 APP_TAG（可溯源）
+#   1. checkout 指定分支/标签，算出带 git 提交号的 APP_TAG（可溯源）
 #   2. 用 rsync 把源码同步到服务器 /opt/careerai（排除依赖/密钥）
 #   3. SSH 到服务器执行 docker compose build + up -d
 #   4. 轮询 /api/health 直到就绪，失败则整条流水线标红
@@ -36,9 +43,9 @@ name: Deploy to Lighthouse
 on:
   push:
     branches:
-      - main
-      - dev_20261018
-      # - 'release-*'        # 需要时取消注释：release/xxx 分支 push 也自动发版
+      - main                     # 只有主干 push 自动部署
+    tags:
+      - 'v*'                     # 打版本标签也部署（用于发版留痕）
   workflow_dispatch:
     inputs:
       branch:

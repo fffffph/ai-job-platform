@@ -1,0 +1,115 @@
+# ============================================================
+# .github/workflows/ci.yml —— 持续集成（只验，不发）
+# ============================================================
+#
+# 【和 deploy.yml 的分工】
+#   ci.yml     = CI：每次 push / PR 都跑，只做"装依赖 + 编译"，确认代码是好的
+#   deploy.yml = CD：只在 main 分支 push、打 v* 标签、或手动运行时才部署
+#
+# 【为什么要有这层】
+#   这次的教训：lockfile 有重复键，本地因为 node_modules 已存在没暴露，
+#   一部署才在服务器炸掉，线上白等 6 分钟。
+#   CI 在 push 后 2~3 分钟就能告诉你"这版编译不过"，不用碰生产。
+#
+# 【跑什么】
+#   三个子项目并行编译（web / server / subapp），任一失败整条标红。
+#   用 --frozen-lockfile：lockfile 与 package.json 不一致会直接失败（正是我们要的）。
+# ============================================================
+
+name: CI
+
+on:
+  push:
+    branches: ['**']          # 所有分支都跑 CI
+  pull_request:
+    branches: ['**']
+
+# 同一分支的新 push 取消旧的 CI 运行，省额度
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------- 主应用 Next.js ----------------
+  web:
+    name: Build web (Next.js)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: my-app/pnpm-lock.yaml
+
+      - name: Install (frozen lockfile)
+        working-directory: my-app
+        run: pnpm install --frozen-lockfile --ignore-scripts --registry=https://registry.npmjs.org
+
+      - name: Build
+        working-directory: my-app
+        env:
+          # 与 Dockerfile 保持一致：空串 = 同源请求，走 nginx 转发
+          NEXT_PUBLIC_API_URL: ''
+          NODE_OPTIONS: --max-old-space-size=3072
+        run: pnpm build
+
+  # ---------------- 后端 Express ----------------
+  server:
+    name: Build server (Express + Prisma)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: my-app/server/package-lock.json
+
+      - name: Install (npm ci)
+        working-directory: my-app/server
+        run: npm ci
+
+      - name: Prisma generate
+        working-directory: my-app/server
+        run: ./node_modules/.bin/prisma generate
+
+      - name: Build (tsc)
+        working-directory: my-app/server
+        run: npm run build
+
+  # ---------------- 子应用 Vite ----------------
+  subapp:
+    name: Build subapp (Vite UMD)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: resume-optimizer/pnpm-lock.yaml
+
+      - name: Install (frozen lockfile)
+        working-directory: resume-optimizer
+        run: pnpm install --frozen-lockfile --ignore-scripts --registry=https://registry.npmjs.org
+
+      - name: Build
+        working-directory: resume-optimizer
+        env:
+          NODE_OPTIONS: --max-old-space-size=3072
+        run: pnpm build
