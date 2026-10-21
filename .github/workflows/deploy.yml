@@ -1,0 +1,155 @@
+# ============================================================
+# .github/workflows/deploy.yml —— GitHub Actions 自动发版
+# ============================================================
+#
+# 【触发方式一：push 自动发版】
+#   推送到 main / dev_20261018 时自动部署对应分支的代码。
+#   想加别的分支，往 branches 列表里加（也支持通配符，如 'release-*'）。
+#
+# 【触发方式二：手动运行，可指定分支】
+#   Actions 页 → Deploy to Lighthouse → Run workflow：
+#   - Branch 下拉框选任意分支（要发哪个分支就选哪个）
+#   - services 填 server / web / subapp（空格分隔，留空=全量）
+#   注意：下拉框只列出**已包含此 workflow 文件**的分支，
+#         所以 workflow 第一次必须先随某个分支推上去。
+#
+# 【它做的事】
+#   1. checkout 指定分支，算出带 git 提交号的 APP_TAG（可溯源）
+#   2. 用 rsync 把源码同步到服务器 /opt/careerai（排除依赖/密钥）
+#   3. SSH 到服务器执行 docker compose build + up -d
+#   4. 轮询 /api/health 直到就绪，失败则整条流水线标红
+#
+# 【为什么用"推送式"而不是"服务器拉取式"】
+#   国内服务器访问 github.com 很慢（实测首包 15s+），git clone 容易超时；
+#   而 Actions 运行在境外，主动 SSH 到你服务器的 22 端口，链路稳定得多。
+#
+# 【需要在仓库 Settings → Secrets and variables → Actions 里配置】
+#   SSH_HOST        82.156.111.43
+#   SSH_USER        ubuntu
+#   SSH_PRIVATE_KEY CI 专用私钥全文（含 BEGIN/END 行）
+#   SSH_PORT        22（可选，默认 22）
+#   DEPLOY_PATH     /opt/careerai（可选，默认 /opt/careerai）
+# ============================================================
+
+name: Deploy to Lighthouse
+
+on:
+  push:
+    branches:
+      - main
+      - dev_20261018
+      # - 'release-*'        # 需要时取消注释：release/xxx 分支 push 也自动发版
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: '要发哪个分支（留空 = 默认 dev_20261018）'
+        required: false
+        default: 'dev_20261018'
+      services:
+        description: '只发指定服务（server / web / subapp，空格分隔；留空=全量）'
+        required: false
+        default: ''
+
+# 同一分支的并发部署排队，避免两个流水线同时改服务器
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # ---------- 1. 取代码（手动运行用输入的分支；push 用触发分支；fetch-depth: 0 才能拿到完整哈希做标签）----------
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch || github.ref }}
+          fetch-depth: 0
+
+      # ---------- 2. 计算镜像标签 ----------
+      # 格式：20261020-abc1234-gh-b42（日期-短哈希-来源-构建号）
+      # 手动发分支时，标签里带上分支名，方便区分同一提交号的不同分支产物
+      - name: Compute APP_TAG
+        id: tag
+        run: |
+          DATE=$(date +%Y%m%d)
+          SHA=$(git rev-parse --short HEAD)
+          BRANCH="${{ github.event.inputs.branch || github.ref_name }}"
+          # 主干分支不进标签；其他分支清洗后截断 12 字符（tag 只允许小写字母数字.-_）
+          SEG=""
+          if [ "$BRANCH" != "main" ] && [ "$BRANCH" != "master" ]; then
+            SEG="$(printf '%s' "$BRANCH" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-' | cut -c1-12)-"
+          fi
+          TAG="${DATE}-${SEG}${SHA}-gh-b${{ github.run_number }}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "本次镜像标签: ${TAG}（来源分支: ${BRANCH}）"
+
+      # ---------- 3. 准备 SSH ----------
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # 首次连接自动记录主机指纹（比 StrictHostKeyChecking=no 更安全一点）
+          ssh-keyscan -p "${{ secrets.SSH_PORT || 22 }}" -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      # ---------- 4. 同步源码 ----------
+      # 用 rsync 而不是 scp：增量传输、可精确排除、删掉的文件也会同步过去
+      - name: Sync source to server
+        run: |
+          rsync -az --delete \
+            --exclude='.git' \
+            --exclude='node_modules' \
+            --exclude='.next' \
+            --exclude='dist' \
+            --exclude='.workbuddy' \
+            --exclude='.env' \
+            --exclude='.env.docker' \
+            --exclude='deploy/*.tar.gz' \
+            -e "ssh -i ~/.ssh/deploy_key -p ${{ secrets.SSH_PORT || 22 }} -o ConnectTimeout=20" \
+            ./ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.DEPLOY_PATH || '/opt/careerai' }}/"
+
+      # ---------- 5. 构建 + 滚动重启 + 等待就绪 ----------
+      - name: Build and restart
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "${{ secrets.SSH_PORT || 22 }}" \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            "APP_TAG='${{ steps.tag.outputs.tag }}' SERVICES='${{ github.event.inputs.services }}' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "${{ secrets.DEPLOY_PATH || '/opt/careerai' }}"
+
+          # 写入本次标签，保证后续手工排查/compose 命令也一致
+          printf 'APP_TAG=%s\n' "$APP_TAG" > .env
+          chmod 600 .env
+
+          echo "==> 构建（标签 $APP_TAG，服务: ${SERVICES:-全部}）"
+          docker compose build ${SERVICES:-}
+
+          echo "==> 滚动重启"
+          docker compose up -d ${SERVICES:-}
+
+          echo "==> 等待就绪（最多 120 秒）"
+          for i in $(seq 1 40); do
+            CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:8080/api/health || echo 000)
+            if [ "$CODE" = "200" ]; then echo "OK 第 ${i} 次探测"; break; fi
+            sleep 3
+          done
+
+          if [ "${CODE:-000}" != "200" ]; then
+            echo "健康检查失败，最近日志："
+            docker compose logs --tail=80 server
+            exit 1
+          fi
+
+          docker compose ps --format 'table {{.Name}}\t{{.Image}}\t{{.Status}}'
+          REMOTE
+
+      # ---------- 6. 公网冒烟 ----------
+      - name: Smoke test
+        run: |
+          for p in /api/health / /login /resume-optimizer/; do
+            printf '%-20s ' "$p"
+            curl -s -o /dev/null -w 'HTTP %{http_code}\n' --max-time 15 "http://${{ secrets.SSH_HOST }}:8080$p"
+          done
