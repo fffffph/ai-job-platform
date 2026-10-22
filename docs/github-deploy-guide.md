@@ -51,6 +51,7 @@ GitHub 仓库 → **Settings → Secrets and variables → Actions → New repos
 | `SSH_PRIVATE_KEY` | `~/.ssh/gh_deploy` **整个文件内容** | 含 `-----BEGIN...` 和 `-----END...` 两行 |
 | `SSH_PORT` | `22` | 可选 |
 | `DEPLOY_PATH` | `/opt/careerai` | 可选 |
+| `NOTIFY_WEBHOOK` | 企业微信群机器人 Webhook | **可选**，配了才发部署通知 |
 
 ### 第 3 步｜仓库里放 workflow
 
@@ -149,13 +150,67 @@ echo "健康检查失败"; docker compose logs --tail=80 server; exit 1
 
 ---
 
-## 六、常见问题
+## 六、部署前自动备份与数据回滚
+
+### 两套备份并存（互补，不冲突）
+
+| 备份 | 触发时机 | 文件 | 保留 |
+|------|---------|------|------|
+| 每日定时 | cron 每天 03:00 | `/opt/backups/careerai_YYYY-MM-DD.sql.gz` | 最近 7 份 |
+| **部署前** | 每次 CD 流水线（构建之前） | `/opt/backups/predeploy_YYYYmmdd_HHMMSS.sql.gz` | 最近 10 份 |
+
+部署前备份的价值：**它记录了"这次上线之前"的数据状态**。如果新版本跑迁移把表结构改坏了，你能精确回到上线前那一秒，而不用赌"昨天 3 点"的定时备份。
+
+### 数据回滚三步（真出事时照着敲）
+
+```bash
+ssh -i ~/.ssh/lighthouse_careerai ubuntu@82.156.111.43
+ls -lht /opt/backups/predeploy_*.sql.gz | head -5      # 挑一个时间点
+
+# 1) 先停掉会写库的服务，避免回滚过程中有新写入
+cd /opt/careerai && docker compose stop server web
+
+# 2) 覆盖还原（--clean 先删对象再建，避免残留）
+gunzip -c /opt/backups/predeploy_20261021_174332.sql.gz \
+  | docker exec -i careerai-postgres psql -U postgres -d careerai
+
+# 3) 起服务并验证
+docker compose start server web
+curl -s http://127.0.0.1:8080/api/health
+```
+
+> 建议**每月挑一个备份真跑一次还原**到测试库（`createdb careerai_restore` + `psql -d careerai_restore`），确认备份可用——没验证过的备份等于没有备份。
+
+### 镜像回滚（代码层，比数据回滚更常用）
+
+```bash
+docker images | grep careerai                        # 找上一版标签
+printf 'APP_TAG=上一版标签\n' > /opt/careerai/.env
+cd /opt/careerai && docker compose up -d             # 秒级切回，无需重建
+```
+
+---
+
+## 七、部署通知（企业微信机器人）
+
+1. 企业微信群 → 右上角「…」→ **群机器人** → 添加 → 复制 Webhook 地址；
+2. 仓库 Settings → Secrets → 新建 `NOTIFY_WEBHOOK`，粘贴整条 URL；
+3. 之后每次部署（成功/失败/取消）都会推一条 markdown 消息，含分支、提交、镜像标签、流水线链接。
+
+> 没配这个 Secret 也不会报错，流水线会打印"跳过通知"。另外**每次运行都会写 Actions 页面摘要**（Summary），不依赖任何配置。
+
+---
+
+## 八、常见问题
 
 | 现象 | 原因 | 处理 |
 |------|------|------|
-| Actions 报 `Permission denied (publickey)` | 公钥没加到服务器 / Secrets 里私钥不完整 | 重新 `echo 公钥 >> authorized_keys`，私钥要含首尾两行 |
-| `ssh: connect to host ... port 22: Connection timed out` | 防火墙 22 限制来源 | 放行 0.0.0.0/0 或改 self-hosted |
-| rsync 后容器起不来、`.env.docker` 丢了 | rsync 忘了 exclude | 从备份恢复密钥文件，补 `--exclude` |
+| Actions 报 `Permission denied (publickey)` | 公钥没加到服务器 / Secrets 里私钥不完整 | 重加公钥；私钥必须含首尾两行 |
+| `ssh: connect to host ... port 22: timed out` | 防火墙 22 限制来源 | 放行 0.0.0.0/0 或改 self-hosted |
+| rsync 后 `.env.docker` 丢了 | rsync 忘了 exclude | 从备份恢复密钥文件，补 `--exclude` |
+| 构建报 `ERR_PNPM_BROKEN_LOCKFILE` | lockfile 有重复键/与 package.json 不一致 | 本地重生成 lockfile，先看 CI 提示的行号 |
+| 构建报 `PrismaConfigEnvError: DATABASE_URL` | CI 缺占位环境变量 | 已在 ci.yml 的 server job 配好，勿删 |
 | 构建 `heap out of memory` | 2G 内存 | 只发单服务（`services=server`）或走路线 C |
 | 部署成功但页面是旧版 | 浏览器缓存 / 镜像没换 | 看 `docker compose ps` 的 IMAGE 标签是否变化 |
-| 流水线成功但 `/api/health` 502 | server 启动中 | 已是轮询 120s；仍失败看 `docker compose logs server` |
+| 流水线成功但 `/api/health` 502 | server 启动中 | 已轮询 120s；仍失败看 `docker compose logs server` |
+| 部署前备份步骤报错 | postgres 容器未运行 | `docker compose ps` 确认 postgres healthy 后再重跑 |
