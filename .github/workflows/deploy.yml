@@ -1,0 +1,239 @@
+# ============================================================
+# .github/workflows/deploy.yml —— CD（持续部署，只在"准备上线"时触发）
+# ============================================================
+#
+# 【和 ci.yml 的分工】
+#   ci.yml     = 每次 push/PR 都跑，只编译验证，**不碰服务器**
+#   deploy.yml = 本文件，只有以下三种情况才部署：
+#       ① push 到 main
+#       ② 打 v* 标签（如 v1.2.0）
+#       ③ Actions 页手动 Run workflow（可指定任意分支 + 指定服务）
+#   所以：在临时分支（如 dev_20261018）上 push **不会**自动上线，
+#         想上线就手动跑一次，或合并到 main。
+#
+# 【为什么这样切】
+#   CI 管"代码对不对"，CD 管"什么时候上生产"，两件事不能混。
+#   临时分支天天 push，如果每次都部署，生产就成了试验田。
+#
+# 【手动发临时分支】
+#   Actions → Deploy to Lighthouse → Run workflow：
+#   - Branch 下拉选分支（要发哪个选哪个）
+#   - services 填 server / web / subapp（留空=全量）
+#
+# 【它做的事】
+#   1. checkout 指定分支/标签，算出带 git 提交号的 APP_TAG（可溯源）
+#   2. 用 rsync 把源码同步到服务器 /opt/careerai（排除依赖/密钥）
+#   3. SSH 到服务器执行 docker compose build + up -d
+#   4. 轮询 /api/health 直到就绪，失败则整条流水线标红
+#
+# 【为什么用"推送式"而不是"服务器拉取式"】
+#   国内服务器访问 github.com 很慢（实测首包 15s+），git clone 容易超时；
+#   而 Actions 运行在境外，主动 SSH 到你服务器的 22 端口，链路稳定得多。
+#
+# 【需要在仓库 Settings → Secrets and variables → Actions 里配置】
+#   SSH_HOST        82.156.111.43
+#   SSH_USER        ubuntu
+#   SSH_PRIVATE_KEY CI 专用私钥全文（含 BEGIN/END 行）
+#   SSH_PORT        22（可选，默认 22）
+#   DEPLOY_PATH     /opt/careerai（可选，默认 /opt/careerai）
+# ============================================================
+
+name: Deploy to Lighthouse
+
+on:
+  push:
+    branches:
+      - main                     # 只有主干 push 自动部署
+    tags:
+      - 'v*'                     # 打版本标签也部署（用于发版留痕）
+    # 只改流水线/文档时不触发部署（避免"同步 workflow 到 main"这种操作误把旧代码发上线）
+    paths-ignore:
+      - '.github/**'
+      - 'docs/**'
+      - '**.md'
+      - 'deploy/*.tar.gz'
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: '要发哪个分支（留空 = 默认 dev_20261018）'
+        required: false
+        default: 'dev_20261018'
+      services:
+        description: '只发指定服务（server / web / subapp，空格分隔；留空=全量）'
+        required: false
+        default: ''
+
+# 同一分支的并发部署排队，避免两个流水线同时改服务器
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # ---------- 1. 取代码（手动运行用输入的分支；push 用触发分支；fetch-depth: 0 才能拿到完整哈希做标签）----------
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch || github.ref }}
+          fetch-depth: 0
+
+      # ---------- 2. 计算镜像标签 ----------
+      # 格式：20261020-abc1234-gh-b42（日期-短哈希-来源-构建号）
+      # 手动发分支时，标签里带上分支名，方便区分同一提交号的不同分支产物
+      - name: Compute APP_TAG
+        id: tag
+        run: |
+          DATE=$(date +%Y%m%d)
+          SHA=$(git rev-parse --short HEAD)
+          BRANCH="${{ github.event.inputs.branch || github.ref_name }}"
+          # 主干分支不进标签；其他分支清洗后截断 12 字符（tag 只允许小写字母数字.-_）
+          SEG=""
+          if [ "$BRANCH" != "main" ] && [ "$BRANCH" != "master" ]; then
+            SEG="$(printf '%s' "$BRANCH" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-' | cut -c1-12)-"
+          fi
+          TAG="${DATE}-${SEG}${SHA}-gh-b${{ github.run_number }}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "本次镜像标签: ${TAG}（来源分支: ${BRANCH}）"
+
+      # ---------- 3. 准备 SSH ----------
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # 首次连接自动记录主机指纹（比 StrictHostKeyChecking=no 更安全一点）
+          ssh-keyscan -p "${{ secrets.SSH_PORT || 22 }}" -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      # ---------- 4. 同步源码 ----------
+      # 用 rsync 而不是 scp：增量传输、可精确排除、删掉的文件也会同步过去
+      - name: Sync source to server
+        run: |
+          rsync -az --delete \
+            --exclude='.git' \
+            --exclude='node_modules' \
+            --exclude='.next' \
+            --exclude='dist' \
+            --exclude='.workbuddy' \
+            --exclude='.env' \
+            --exclude='.env.docker' \
+            --exclude='deploy/*.tar.gz' \
+            -e "ssh -i ~/.ssh/deploy_key -p ${{ secrets.SSH_PORT || 22 }} -o ConnectTimeout=20" \
+            ./ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.DEPLOY_PATH || '/opt/careerai' }}/"
+
+      # ---------- 5. 部署前备份数据库（低成本保险，出问题能立刻回退数据）----------
+      # 为什么放在"构建之前"：构建+重启有几分钟窗口，备份要覆盖这个窗口之前的状态。
+      # 保留最近 10 份 predeploy_*.sql.gz，每日定时备份（03:00）仍然独立运行。
+      - name: Backup database (pre-deploy)
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "${{ secrets.SSH_PORT || 22 }}" \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" bash -s <<'REMOTE'
+          set -euo pipefail
+          mkdir -p /opt/backups
+          FILE="/opt/backups/predeploy_$(date +%Y%m%d_%H%M%S).sql.gz"
+          # 注意：这里用 set -o pipefail 保证 pg_dump 失败时不会生成"看起来正常"的空文件
+          docker exec careerai-postgres pg_dump -U postgres careerai | gzip > "$FILE"
+          # 只留最近 10 份部署前备份
+          ls -1t /opt/backups/predeploy_*.sql.gz | tail -n +11 | xargs -r rm -f
+          echo "备份完成: $(du -h "$FILE" | cut -f1)  $FILE"
+          REMOTE
+
+      # ---------- 6. 构建 + 滚动重启 + 等待就绪 ----------
+      - name: Build and restart
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "${{ secrets.SSH_PORT || 22 }}" \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            "APP_TAG='${{ steps.tag.outputs.tag }}' SERVICES='${{ github.event.inputs.services }}' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "${{ secrets.DEPLOY_PATH || '/opt/careerai' }}"
+
+          # 写入本次标签，保证后续手工排查/compose 命令也一致
+          printf 'APP_TAG=%s\n' "$APP_TAG" > .env
+          chmod 600 .env
+
+          echo "==> 构建（标签 $APP_TAG，服务: ${SERVICES:-全部}）"
+          docker compose build ${SERVICES:-}
+
+          echo "==> 滚动重启"
+          docker compose up -d ${SERVICES:-}
+
+          echo "==> 等待就绪（最多 120 秒）"
+          for i in $(seq 1 40); do
+            CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:8080/api/health || echo 000)
+            if [ "$CODE" = "200" ]; then echo "OK 第 ${i} 次探测"; break; fi
+            sleep 3
+          done
+
+          if [ "${CODE:-000}" != "200" ]; then
+            echo "健康检查失败，最近日志："
+            docker compose logs --tail=80 server
+            exit 1
+          fi
+
+          docker compose ps --format 'table {{.Name}}\t{{.Image}}\t{{.Status}}'
+          REMOTE
+
+      # ---------- 7. 公网冒烟 ----------
+      - name: Smoke test
+        run: |
+          for p in /api/health / /login /resume-optimizer/; do
+            printf '%-20s ' "$p"
+            curl -s -o /dev/null -w 'HTTP %{http_code}\n' --max-time 15 "http://${{ secrets.SSH_HOST }}:8080$p"
+          done
+
+      # ---------- 8. 结果通知（企业微信群机器人，可选）----------
+      # 配置方法：企业微信群 → 右上角「群机器人」→ 添加 → 复制 Webhook 地址
+      #           → 仓库 Settings → Secrets → 新建 NOTIFY_WEBHOOK（整条 URL）
+      # 未配置该 Secret 时自动跳过，不影响部署。
+      - name: Notify (WeCom)
+        if: always()
+        env:
+          WEBHOOK: ${{ secrets.NOTIFY_WEBHOOK }}
+          JOB_STATUS: ${{ job.status }}
+          APP_TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          if [ -z "${WEBHOOK:-}" ]; then
+            echo "未配置 NOTIFY_WEBHOOK，跳过通知"
+            exit 0
+          fi
+
+          case "$JOB_STATUS" in
+            success) ICON="✅"; TEXT="部署成功" ;;
+            cancelled) ICON="⚠️"; TEXT="部署被取消" ;;
+            *) ICON="❌"; TEXT="部署失败" ;;
+          esac
+
+          # 用 printf 逐行拼接，避免 heredoc 缩进污染 markdown
+          CONTENT=$(printf '%s **CareerAI %s**\n> 分支：%s\n> 提交：%s\n> 镜像：%s\n> 触发：%s\n> 详情：[查看流水线](%s/%s/actions/runs/%s)' \
+            "$ICON" "$TEXT" "$GITHUB_REF_NAME" "${GITHUB_SHA:0:7}" "$APP_TAG" "$GITHUB_ACTOR" \
+            "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID")
+          export CONTENT
+
+          # 用 python 生成 JSON，避免中文/换行转义踩坑
+          PAYLOAD=$(python3 -c "import json,os; print(json.dumps({'msgtype':'markdown','markdown':{'content':os.environ['CONTENT']}}))")
+          curl -s -X POST "$WEBHOOK" -H 'Content-Type: application/json' -d "$PAYLOAD" > /dev/null
+          echo "通知已发送（${JOB_STATUS}）"
+        continue-on-error: true
+
+      # ---------- 9. 流水线摘要（无需任何配置，Actions 页面直接可见）----------
+      - name: Write job summary
+        if: always()
+        run: |
+          {
+            echo "## 部署结果：${{ job.status }}"
+            echo ""
+            echo "| 项 | 值 |"
+            echo "|---|---|"
+            echo "| 镜像标签 | \`${{ steps.tag.outputs.tag }}\` |"
+            echo "| 分支 | \`${GITHUB_REF_NAME}\` |"
+            echo "| 提交 | \`${GITHUB_SHA:0:7}\` |"
+            echo "| 触发人 | ${GITHUB_ACTOR} |"
+            echo "| 服务 | \`${{ github.event.inputs.services || '全部' }}\` |"
+            echo ""
+            if [ "${{ job.status }}" != "success" ]; then
+              echo "> ⚠️ 部署未成功。回滚办法：改服务器 \`.env\` 里的 \`APP_TAG\` 为上一版标签后执行 \`docker compose up -d\`。"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
