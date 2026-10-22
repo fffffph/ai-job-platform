@@ -1,0 +1,20 @@
+{
+  "name": "careerai-tooling",
+  "version": "1.0.0",
+  "private": true,
+  "description": "本地提交校验工具壳：只存放 prettier / lefthook / commitlint / secretlint 等开发期依赖，不参与 my-app、server、resume-optimizer 的任何构建与部署。",
+  "scripts": {
+    "prepare": "lefthook install",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^21.2.4",
+    "@commitlint/config-conventional": "^21.2.4",
+    "@secretlint/secretlint-rule-pattern": "^13.0.7",
+    "@secretlint/secretlint-rule-preset-recommend": "^13.0.7",
+    "lefthook": "^2.2.2",
+    "prettier": "^3.9.10",
+    "secretlint": "^13.0.7"
+  }
+}

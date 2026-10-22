@@ -1,0 +1,151 @@
+# ============================================================
+# lefthook.yml —— 本地提交质量门禁
+#
+# ⚠️ 语法说明：本文件使用 lefthook v2 的 `jobs:` 数组语法。
+#    v1 时代的 `commands:` + 命名映射写法在 v2 已被 jobs 取代。
+#    min_version 会在装错版本时直接报错，
+#    而不是静默失效（静默失效的钩子比没有钩子更危险）。
+#
+# ============================================================
+# 【钩子分工：全部基于本机实测数据，不是拍脑袋】
+#
+#   pre-commit（约 2.3 秒）
+#     prettier 0.8s / secrets 1.2s / hygiene 2.1s（并行，取最大值）
+#     ↑ 只拦「不该进仓库的东西」
+#
+#   pre-push（约 17 秒）
+#     eslint-web 7s / typecheck-server 12s / typecheck-subapp 17s（并行）
+#     ↑ 拦「会污染主干的错误」
+#
+#   CI（分钟级，已有 ci.yml）
+#     my-app 全量 tsc + next build + 全量 eslint
+#     ↑ 拦「结构性/工程级问题」
+#
+# 【为什么 ESLint 不在 pre-commit 里】
+#   实测：my-app 的 eslint 单文件执行 7.0 秒，其中 --print-config
+#   （纯配置加载）就占 4.5 秒 —— 这是 eslint-config-next 加载
+#   typescript-eslint/react-hooks 等整套插件的固定成本，
+#   与文件数量无关，--cache 也消不掉（实测加缓存后仍是 6.95s）。
+#   每次提交都等 7 秒，必然逼出 git commit --no-verify，
+#   钩子等于白装。所以它归 pre-push。
+#
+# 【为什么 my-app 的 tsc 既不在 pre-commit 也不在 pre-push】
+#   实测：tsc --noEmit -p my-app/tsconfig.json 需要 2 分 22 秒
+#   （220 个源码文件 + Next 16 / React 19 / antd v6 类型推断量巨大，
+#     tsconfig 里 incremental 已开启，仍压不下来）。
+#   这个量级只适合 CI，而 CI 的 next build 本身就包含类型检查。
+#   强行塞进本地钩子 = 每次都有人 --no-verify。
+#
+# 【为什么所有命令都写成 `node <包内js路径>` 而不是 `npx xxx`】
+#   Windows 下 node_modules/.bin 里放的是无扩展名的 sh shim，
+#   若 lefthook 用 cmd.exe 执行 run，sh shim 会执行失败。
+#   直接 node 执行真实 js 入口，跨 shell 行为完全一致。
+# ============================================================
+
+min_version: 2.0.0
+
+# ============================================================
+# 提交前：只拦「脏东西」
+# ============================================================
+pre-commit:
+  # 并行执行：格式化、密钥扫描、卫生检查同时跑，总耗时 ≈ 最慢那一项
+  parallel: true
+
+  jobs:
+    # ----------------------------------------------------------
+    # 1. 格式化：Prettier（三个子项目统一）
+    #    --ignore-unknown：遇到不认识的扩展名直接跳过，不报错
+    # ----------------------------------------------------------
+    - name: prettier
+      glob: "*.{js,jsx,ts,tsx,json,css,md,yml,yaml,html}"
+      run: node node_modules/prettier/bin/prettier.cjs --write --ignore-unknown {staged_files}
+      # stage_fixed：格式化结果自动重新 git add，
+      # 否则会出现「文件被改了但没进本次提交」的困惑
+      stage_fixed: true
+
+    # ----------------------------------------------------------
+    # 2. 密钥泄露扫描：secretlint
+    #
+    #    preset-recommend 覆盖 AWS/GCP/GitHub/GitLab Token、私钥、
+    #    数据库连接串、OpenAI/Anthropic 等 28 类凭据；
+    #    .secretlintrc.json 里另加了 3 条自定义规则，其中
+    #    「sk- 风格 API Key」是本项目必需 —— 实测 preset 的 openai
+    #    规则只认 OpenAI 官方 key 长度，抓不到 DeepSeek 的
+    #    sk- + 32 位格式，不补这条等于对项目最关键的密钥视而不见。
+    # ----------------------------------------------------------
+    - name: secrets
+      glob: "*.{js,jsx,ts,tsx,json,yml,yaml,md,sh,html,css,txt}"
+      run: node node_modules/secretlint/bin/secretlint.js {staged_files}
+      fail_text: "发现疑似密钥/凭据泄露。请改用环境变量读取，并轮换已暴露的密钥"
+
+    # ----------------------------------------------------------
+    # 3. 工程卫生：大文件 + 未解决冲突标记
+    #    逻辑放在独立 .sh 里（Windows 下多行 bash 内联会语法报错）
+    # ----------------------------------------------------------
+    - name: hygiene
+      run: bash .lefthook/check-hygiene.sh {staged_files}
+
+# ============================================================
+# 提交信息校验：必须符合 Conventional Commits
+# 正例：feat(auth): 支持手机号登录
+# 反例：update code / 修复bug（缺 type）
+# ============================================================
+commit-msg:
+  jobs:
+    - name: commitlint
+      # {1} = 提交信息文件路径（.git/COMMIT_EDITMSG）
+      run: node node_modules/@commitlint/cli/cli.js --edit {1}
+      fail_text: "提交信息不符合规范，正确格式：type(scope): 描述"
+
+# ============================================================
+# 推送前：拦「会污染主干的错误」
+#
+# 用 {push_files} 而不是 {all_files}：只检查本次推送涉及的文件，
+# 避免每次 push 都全量扫描。glob 过滤保证「没碰 my-app 就不跑 eslint」。
+# ============================================================
+pre-push:
+  parallel: true
+
+  jobs:
+    # ----------------------------------------------------------
+    # 1. ESLint：my-app（目前唯一有 eslint 配置的项目）
+    #
+    #    【为什么这里必须用 root: 切到 my-app 目录】
+    #    ESLint 9 的 flat config 是按【当前工作目录 cwd】向上查找
+    #    eslint.config.mjs，而不是按被检查文件所在目录查找。
+    #    实测：在仓库根直接调 eslint，会报
+    #    "ESLint couldn't find an eslint.config.(js|mjs|cjs) file"。
+    #
+    #    用 root: "my-app/" 后 lefthook v2 会做两件事：
+    #      1) cwd 切到 my-app/（配置被找到，Next 插件也能正确
+    #         识别 app/ 目录，不再报 "Pages directory cannot be found"）
+    #      2) 把文件路径从仓库相对【重写】为相对 root
+    #         实测：my-app/foo.tsx → ./foo.tsx
+    #
+    #    ⚠️ 设了 root 之后 glob 也必须写【相对 root】的路径。
+    #       实测写 "my-app/**/*.tsx" 会让该 job 完全不触发
+    #       （文件已被 root 过滤成相对路径，再拿 my-app/ 前缀去匹配永远不中），
+    #       表现是「push 成功但 eslint 一次都没跑过」，极其隐蔽。
+    # ----------------------------------------------------------
+    - name: eslint-web
+      root: "my-app/"
+      glob: "**/*.{js,jsx,ts,tsx}"
+      # pre-push 不加 --fix：推送阶段不该悄悄改动工作区文件
+      run: node node_modules/eslint/bin/eslint.js --cache --no-warn-ignored {push_files}
+      fail_text: "ESLint 检查未通过，请先修复再推送"
+
+    # ----------------------------------------------------------
+    # 2. 类型检查：后端 Express（实测 12 秒，可接受）
+    # ----------------------------------------------------------
+    - name: typecheck-server
+      glob: "my-app/server/**/*.ts"
+      run: node my-app/server/node_modules/typescript/bin/tsc --noEmit -p my-app/server/tsconfig.json
+      fail_text: "后端 TypeScript 类型检查未通过"
+
+    # ----------------------------------------------------------
+    # 3. 类型检查：子应用 Vite（实测 16.8 秒，可接受）
+    # ----------------------------------------------------------
+    - name: typecheck-subapp
+      glob: "resume-optimizer/**/*.{ts,tsx}"
+      run: node resume-optimizer/node_modules/typescript/bin/tsc --noEmit -p resume-optimizer/tsconfig.json
+      fail_text: "子应用 TypeScript 类型检查未通过"

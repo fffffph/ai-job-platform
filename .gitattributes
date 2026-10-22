@@ -1,0 +1,59 @@
+# ============================================================
+# .gitattributes —— 换行符与二进制处理约定
+#
+# 【为什么需要这个文件】
+#   实际状态：Git 索引里 295 个文件全部以 LF 存储（i/lf），
+#   工作区却因为本机 core.autocrlf=true 显示为 CRLF（w/crlf）。
+#   也就是说仓库存储层本来就是干净的，只是「本机配置」在起作用。
+#
+#   问题是：如果换一台机器、或别人 autocrlf=false，
+#   工作区就会变成 LF —— 同一个文件在不同人机器上换行符不一致，
+#   Prettier（endOfLine: lf）就会反复报格式问题。
+#   把约定写进 .gitattributes（进版本库、所有人共享），
+#   就不再依赖每个人的本机 git 配置。
+#
+#   eol=lf 的含义：无论本机 autocrlf 怎么设，签出到工作区一律用 LF。
+#   本次改动经 `git add --renormalize .` 验证：零文件变更，
+#   因为索引侧原本就已是 LF。
+# ============================================================
+
+# 所有文本文件：自动识别文本/二进制，工作区统一 LF
+* text=auto eol=lf
+
+# ---------- 明确标记为二进制（禁止任何换行符转换）----------
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.tar binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.eot binary
+
+# ---------- 特定类型强制 LF（双保险）----------
+*.sh text eol=lf
+*.bash text eol=lf
+*.js text eol=lf
+*.jsx text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.json text eol=lf
+*.css text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# ---------- Windows 批处理必须 CRLF，否则无法执行 ----------
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# ---------- 锁文件：GitHub 上不显示 diff，减少 PR 噪声 ----------
+pnpm-lock.yaml linguist-generated=true
+package-lock.json linguist-generated=true
