@@ -4,6 +4,8 @@
 > 服务器：`ubuntu@82.156.111.43:/opt/careerai`，入口 `http://82.156.111.43:8080`
 > 实测网络：服务器 → GitHub **SSH 22 通、codeload/ghcr 快，但 github.com 网页 15s+**（拉取式偏慢）
 
+> 📎 分支怎么切、什么时候发生产、测试在哪测 —— 见 `docs/branch-workflow.md`（分支与发布工作流）。
+
 ---
 
 ## 一、三条路线怎么选

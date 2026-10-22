@@ -72,26 +72,39 @@ dev/dev_2026…:   … 共用 22 个提交，与 main 完全无交集
 
 `bca0828` 只是「内容对齐」，血缘没对齐 —— `main` 和 `dev` 的共同祖先还停在 `f8c2986`。历史分叉 + 双方都改过同一批行 = git 无从判断该取谁，于是就是 PR #18 那种「25 commits / 164 files / 一堆冲突」。
 
-### 一次性修复：吸收式合并（推荐）
+### 一次性修复：吸收式合并（✅ 已于 2026-10-22 完成）
 
 现在三份代码内容相同，做一次 `main ← dev` 的合并：
 
-- 树的宽度完全一样 → **零冲突**（已实测验证：合并结果树与 `dev` 的树 SHA 完全一致）
+- 树完全一样 → **零冲突**（实测：合并结果树与 `dev` 的树 SHA 完全一致）
 - 代价：只多一个 merge 提交，**任何文件内容都不变**
 - 收益：`main` 与 `dev` 的共同祖先立刻变成 `dev` 的最新提交 → **以后每一次 `dev → main` 都是快进（fast-forward），结构上不可能再冲突**
 
-命令（需确认后执行，因为 push `main` 会触发一次生产部署）：
+实际执行的命令与结果：
 
 ```bash
-git checkout main && git pull
-git merge origin/dev -m "chore: 对齐 main 与 dev 历史，此后 dev→main 为快进发布"
-git push origin main
+git checkout main && git pull --ff-only
+git merge --no-edit origin/dev -m "chore: 对齐 main 与 dev 历史（内容零变化），此后 dev→main 为快进发布"
+git push origin main            # bca0828..1ab106f
 ```
 
-> 这次部署虽然代码没变，流水线仍会完整跑一遍（备份 + 重建 + 冒烟 + 通知），
-> 耗时约 5–8 分钟，容器会短暂重启。**建议挑没人在用的时间点执行一次，一劳永逸。**
+**意外的好消息：这次 push 没有触发部署。**
+因为合并前后树完全相同 → GitHub 算出的变更文件数为 0 → 被 `deploy.yml` 的 `paths-ignore` 过滤掉，流水线直接跳过。
+**生产零抖动**，白得一次历史对齐。
 
-同时把工作分支对齐（`dev_20261018` 落后 `dev` 3 个 merge 提交、内容相同，可直接快进）：
+对齐后的状态（`git rev-list --left-right --count origin/main...origin/dev`）：
+
+```
+4    0        ← 左 = main 独有 4 个历史提交（旧的 Dev #9 那条线 + 本次 merge）
+                右 = dev 独有 0 个  ✅ 说明 dev 已被 main 完全包含
+```
+
+这意味着：**以后 dev 上有新提交时，`git merge dev` 会是一次纯快进**，不可能再冲突。
+
+> ⚠️ 唯一禁忌：**永远不要把 `main` 反向合进 `dev`**（`git merge main` 在 dev 上执行）。
+> 那会把 4 个遗留历史提交灌进 dev，重新制造分叉。要同步就用 `git pull origin dev`。
+
+工作分支对齐（`dev_20261018` 落后 `dev` 3 个 merge 提交、内容相同，可随时快进）：
 
 ```bash
 git checkout dev_20261018 && git merge --ff-only origin/dev && git push origin dev_20261018
@@ -256,17 +269,13 @@ git checkout dev && git merge --no-ff hotfix/otp-500 && git push origin dev
 
 ### 遗留分支清理（建议）
 
-| 分支 | 状态 | 建议 |
+| 分支 | 状态 | 处理 |
 | --- | --- | --- |
-| `dev_test` | 2026-10-15 后无提交 | 删 |
-| `dev_20261018` | 与 `dev` 内容完全一致 | 手上的活迁到 `feat/*` 后删 |
+| `dev_test` | 10-15 后无提交 | ✅ 已删除（2026-10-22） |
+| `dev_20261018` | 与 `dev` 内容完全一致 | 手上的活迁到 `feat/*` 后再删 |
+| `dev_20226017` / `dev_new` / `dev_test_20261015` / `feature_login` | 遗留/拼写错误 | ✅ 已删除 |
 
-> 注：`dev_20226017` / `dev_new` / `dev_test_20261015` / `feature_login` 已在远程清理完毕。
-
-```bash
-# 需要时执行
-git push origin --delete dev_test
-```
+当前远程只剩三个分支：`main`、`dev`、`dev_20261018`。
 
 ---
 
@@ -288,6 +297,11 @@ git push origin --delete dev_test
 
 **Q：改完 `nginx.conf` 或 `.env` 只做「重新部署」行不行？**
 不行。`nginx.conf` 是单文件 bind mount，`scp` 替换会换 inode，容器仍指向旧文件。必须 `docker compose up -d --force-recreate nginx`。走 CD 流水线（`docker compose build && up -d`）会自动重建，没有这个问题。
+
+**Q：我 push 了 `main`，为什么 Actions 里没有新运行？**
+`deploy.yml` 带 `paths-ignore: ['.github/**', 'docs/**', '**.md', 'deploy/*.tar.gz']`。两种会「静默跳过」的情况：
+① 这次 push 只动了文档/流水线文件；② 这次 push 的 diff 为空（比如只做历史合并、内容没变）。
+判定标准是「**这次 push 到底改没改部署相关的代码**」，不是「有没有提交」。这是设计行为，不是故障。
 
 **Q：部署失败了怎么办？**
 Actions 页面看哪个 step 红。最常见两类：构建 OOM（内存不足，加 swap 或调 `NODE_OPTIONS`）、容器健康检查超时（看 `docker logs careerai-server`）。代码没换的情况下失败，可在同页面点 **Re-run failed jobs**。
