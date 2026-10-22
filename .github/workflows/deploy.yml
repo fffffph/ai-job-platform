@@ -46,6 +46,12 @@ on:
       - main                     # 只有主干 push 自动部署
     tags:
       - 'v*'                     # 打版本标签也部署（用于发版留痕）
+    # 只改流水线/文档时不触发部署（避免"同步 workflow 到 main"这种操作误把旧代码发上线）
+    paths-ignore:
+      - '.github/**'
+      - 'docs/**'
+      - '**.md'
+      - 'deploy/*.tar.gz'
   workflow_dispatch:
     inputs:
       branch:
