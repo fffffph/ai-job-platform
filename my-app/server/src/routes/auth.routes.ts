@@ -51,4 +51,42 @@ authRouter.post("/register", authController.register);
  */
 authRouter.post("/login", authController.login);
 
+/**
+ * GET /api/auth/captcha
+ *
+ * 图形验证码（公开）。返回 { captchaId, svg }。
+ */
+authRouter.get("/captcha", authController.getCaptcha);
+
+/**
+ * GET /api/auth/captcha-status
+ *
+ * 预检下一次发送验证码是否需要图形验证码（公开）。
+ * 前端进入验证码表单时调用，required=true 提前展示图形验证码区，
+ * 实现「先完成人机验证、再点获取验证码」的交互顺序。
+ * 返回 { required: boolean }。
+ */
+authRouter.get("/captcha-status", authController.getCaptchaStatusApi);
+
+/**
+ * POST /api/auth/send-code
+ *
+ * 发送验证码（公开）。body: { identifier, scene, captchaId?, captchaText? }
+ */
+authRouter.post("/send-code", authController.sendVerificationCode);
+
+/**
+ * POST /api/auth/login-by-code
+ *
+ * 验证码登录（公开）。body: { identifier, code }
+ */
+authRouter.post("/login-by-code", authController.loginByCode);
+
+/**
+ * POST /api/auth/reset-password
+ *
+ * 忘记密码（公开）。body: { identifier, code, newPassword }
+ */
+authRouter.post("/reset-password", authController.resetPassword);
+
 export default authRouter;

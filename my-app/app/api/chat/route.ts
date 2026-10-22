@@ -87,12 +87,12 @@ ${body.resume}
       success: true,
       result: data.choices?.[0]?.message?.content || "无返回结果",
     });
-  } catch (error: any) {
+  } catch (error) {
     console.log("[api/chat] 请求失败:", error);
 
     return NextResponse.json({
       success: false,
-      message: error.message || "AI 请求失败",
+      message: (error instanceof Error && error.message) || "AI 请求失败",
     });
   }
 }

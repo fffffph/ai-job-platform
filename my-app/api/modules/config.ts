@@ -23,6 +23,7 @@ import type {
   EffectiveConfigItem,
   SaveConfigItem,
   CreateConfigParams,
+  PublicConfigMap,
 } from "../types";
 
 // ============================================================
@@ -158,6 +159,38 @@ export async function resetAllConfigsApi(): Promise<ApiResponse<null>> {
     return {
       success: false,
       message: err?.message || "恢复全部默认失败",
+      code: err?.code,
+    };
+  }
+}
+
+// ============================================================
+// 公开配置（免登录，供登录页 / 注册页读取）
+// ============================================================
+
+/**
+ * 读取公开配置白名单（**无需登录**）。
+ *
+ * GET /api/config/public
+ *
+ * 【为什么单独一个接口】
+ * 登录页在未登录状态下要决定「显示哪些登录方式、验证码倒计时几秒、
+ * 密码最短多少位」，而 GET /api/config 需要登录态，登录页拿不到。
+ * 后端为此开了一个严格的键白名单接口，只返回开关与策略类配置，
+ * 绝不包含 prompt 文案、模型参数或默认密码。
+ *
+ * @returns 公开配置映射（缺失的键表示读取失败，调用方用默认值兜底）
+ */
+export async function getPublicConfigsApi(): Promise<
+  ApiResponse<PublicConfigMap>
+> {
+  try {
+    return await client.get("/api/config/public");
+  } catch (error: unknown) {
+    const err = error as { message?: string; code?: string };
+    return {
+      success: false,
+      message: err?.message || "读取登录配置失败",
       code: err?.code,
     };
   }

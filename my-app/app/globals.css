@@ -37,6 +37,19 @@
   --sidebar-accent-foreground: oklch(0.15 0.02 260);
   --sidebar-border: oklch(0.9 0.02 260);
   --sidebar-ring: oklch(0.55 0.25 260);
+
+  /* ---------- 业务自定义语义变量 ----------
+     个人中心（Key 卡片 / 登录标识行）等页面在用。这些名字此前只被引用、
+     从未定义，导致 `background: var(--bg-soft)` 这类声明整条失效（既没底色
+     也没边框）。这里按主题补上，让旧引用与新页面都有真实取值。 */
+  --bg-soft: oklch(0.975 0.005 260); /* 次级面板底色 */
+  --border-1: oklch(0.9 0.02 260); /* 与 --border 同色，保留旧命名 */
+  --accent-1: oklch(0.55 0.25 260); /* 强调色（图标/高亮），取品牌蓝 */
+  --accent-2: oklch(0.6 0.2 300); /* 次强调色 */
+  --text-1: oklch(0.15 0.02 260);
+  --text-2: oklch(0.35 0.02 260);
+  --text-3: oklch(0.45 0.02 260);
+  --warning: oklch(0.62 0.15 65);
 }
 
 .dark {
@@ -72,6 +85,16 @@
   --sidebar-accent-foreground: oklch(0.95 0 0);
   --sidebar-border: oklch(0.25 0.02 270);
   --sidebar-ring: oklch(0.65 0.25 270);
+
+  /* ---------- 业务自定义语义变量（暗色） ---------- */
+  --bg-soft: oklch(0.16 0.015 270); /* 次级面板底色：比 --card 略亮，形成层次 */
+  --border-1: oklch(0.25 0.02 270);
+  --accent-1: oklch(0.65 0.25 270);
+  --accent-2: oklch(0.6 0.2 300);
+  --text-1: oklch(0.95 0 0);
+  --text-2: oklch(0.8 0 0);
+  --text-3: oklch(0.65 0 0);
+  --warning: oklch(0.75 0.15 75);
 }
 
 @theme inline {
@@ -222,4 +245,97 @@
 }
 .md-answer a:hover {
   text-decoration: underline;
+}
+
+/* ============================================================
+   认证类页面外壳（登录 / 注册 / 强制改密）
+   ============================================================
+   这三个页面在 /dashboard 之外，没有 dashboard 布局包裹，
+   因此背景与卡片样式全部在这里统一定义，并统一使用 CSS 变量 ——
+   <html> 上的 .dark 类由 next-themes 切换，变量随之改变，
+   一份样式自动服务明暗两套主题，不再写死 #050505 / white/xx。 */
+
+.auth-page {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  width: 100%;
+  overflow: hidden;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/* 背景装饰层：不接收鼠标事件，避免挡住表单 */
+.auth-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* 两团模糊光晕 —— 用 --primary / --accent-2 配 color-mix，
+   浅色下是淡蓝紫色雾，深色下是发光的辉光 */
+.auth-glow {
+  position: absolute;
+  width: 50%;
+  height: 50%;
+  border-radius: 50%;
+  filter: blur(120px);
+}
+.auth-glow-1 {
+  top: -10%;
+  left: -10%;
+  background: color-mix(in srgb, var(--primary) 16%, transparent);
+}
+.auth-glow-2 {
+  right: -10%;
+  bottom: -10%;
+  background: color-mix(in srgb, var(--accent-2) 14%, transparent);
+}
+
+/* 细网格：颜色取自 --foreground 的低透明度，明暗都能看见
+   （原来写死 #ffffff05，浅色主题下等于完全不可见） */
+.auth-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(
+      to right,
+      color-mix(in srgb, var(--foreground) 5%, transparent) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      to bottom,
+      color-mix(in srgb, var(--foreground) 5%, transparent) 1px,
+      transparent 1px
+    );
+  background-size: 40px 40px;
+  -webkit-mask-image: radial-gradient(
+    ellipse 60% 50% at 50% 50%,
+    #000 70%,
+    transparent 100%
+  );
+  mask-image: radial-gradient(
+    ellipse 60% 50% at 50% 50%,
+    #000 70%,
+    transparent 100%
+  );
+}
+
+.auth-content {
+  position: relative;
+  z-index: 10;
+  width: 100%;
+  padding: 40px 24px;
+}
+
+/* 毛玻璃卡片：底色取 --card 半透明，边框取 --border，随主题切换 */
+.auth-card {
+  background: color-mix(in srgb, var(--card) 78%, transparent);
+  border: 1px solid var(--border);
+  -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: blur(24px);
+  box-shadow: 0 0 50px -12px color-mix(in srgb, var(--primary) 35%, transparent);
 }

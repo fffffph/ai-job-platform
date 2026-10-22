@@ -6,7 +6,7 @@
  * 【职责】
  * 幂等地初始化系统基线数据：
  * 1. 两个基础角色（admin/user，均置 isSystem=true）；
- * 2. 菜单树（20 条：5 业务菜单 + 1 目录 + 4 二级菜单 + 10 按钮权限码）；
+ * 2. 菜单树（21 条：5 业务菜单 + 1 目录 + 4 二级菜单 + 11 按钮权限码）；
  * 3. 角色-菜单绑定：user 角色绑定 5 个业务菜单；admin 不写绑定（走代码短路）；
  * 4. 把首个管理员绑定到 admin 角色。
  * 可重复执行，不会产生重复数据。
@@ -127,6 +127,7 @@ const MENU_SEEDS: MenuSeed[] = [
   { code: PERMISSION_CODES.ROLE_UPDATE, type: MENU_TYPES.BUTTON, name: "编辑角色", sort: 20, parentCode: PERMISSION_CODES.SYSTEM_ROLE },
   { code: PERMISSION_CODES.ROLE_DELETE, type: MENU_TYPES.BUTTON, name: "删除角色", sort: 30, parentCode: PERMISSION_CODES.SYSTEM_ROLE },
   { code: PERMISSION_CODES.ROLE_GRANT, type: MENU_TYPES.BUTTON, name: "分配权限", sort: 40, parentCode: PERMISSION_CODES.SYSTEM_ROLE },
+  { code: PERMISSION_CODES.USER_CREATE, type: MENU_TYPES.BUTTON, name: "新增用户", sort: 5, parentCode: PERMISSION_CODES.SYSTEM_USER },
   { code: PERMISSION_CODES.USER_GRANT, type: MENU_TYPES.BUTTON, name: "分配角色", sort: 10, parentCode: PERMISSION_CODES.SYSTEM_USER },
   { code: PERMISSION_CODES.USER_DISABLE, type: MENU_TYPES.BUTTON, name: "停用用户", sort: 20, parentCode: PERMISSION_CODES.SYSTEM_USER },
 ];
@@ -185,7 +186,7 @@ async function main(): Promise<void> {
     codeToId.set(seed.code, menu.id);
   }
 
-  console.log(`✓ 菜单已就绪：共 ${MENU_SEEDS.length} 条（业务菜单 5 + 目录 1 + 二级菜单 4 + 按钮 10）\n`);
+  console.log(`✓ 菜单已就绪：共 ${MENU_SEEDS.length} 条（业务菜单 5 + 目录 1 + 二级菜单 4 + 按钮 11）\n`);
 
   // ---------- 步骤 3：绑定 user 角色 → 5 个业务菜单 ----------
   // admin 不写任何 RoleMenu 绑定（鉴权/取菜单时按角色名短路返回全量）

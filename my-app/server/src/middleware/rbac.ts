@@ -74,10 +74,18 @@ export const PERMISSION_CODES = {
   ROLE_DELETE: "system:role:delete",
   /** 分配权限（按钮） */
   ROLE_GRANT: "system:role:grant",
+  /** 新增用户（按钮）—— A-P0/B-P0 新增 */
+  USER_CREATE: "system:user:create",
   /** 分配角色（按钮） */
   USER_GRANT: "system:user:grant",
   /** 停用用户（按钮） */
   USER_DISABLE: "system:user:disable",
+  /** 编辑用户（按钮）—— B-P1 新增 */
+  USER_UPDATE: "system:user:update",
+  /** 重置密码（按钮）—— B-P1 新增 */
+  USER_RESET_PASSWORD: "system:user:reset-password",
+  /** 删除用户（按钮）—— B-P1 新增（软删除） */
+  USER_DELETE: "system:user:delete",
 } as const;
 
 /**

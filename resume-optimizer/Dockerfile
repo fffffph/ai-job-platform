@@ -19,7 +19,7 @@ FROM node:22-alpine AS builder
 WORKDIR /app
 
 # 子应用同样用 pnpm（pnpm-lock.yaml）
-RUN corepack enable && corepack prepare pnpm@11 --activate
+RUN npm i -g pnpm@10 --registry=https://registry.npmmirror.com
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 
@@ -30,7 +30,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 # 白名单写在 pnpm-workspace.yaml 的 onlyBuiltDependencies 里
 # （pnpm 11 唯一认可的方式，package.json 的 ppm 字段已废弃）
 # ------------------------------------------------------------
-RUN pnpm install --frozen-lockfile --ignore-scripts
+RUN pnpm install --frozen-lockfile --ignore-scripts --registry=https://registry.npmmirror.com
 
 COPY . .
 
@@ -38,7 +38,7 @@ COPY . .
 #   dist/index.js      —— UMD 包（qiankun 真正加载的文件）
 #   dist/index.js.map  —— sourcemap
 # 注意：库模式不会生成 index.html，入口 HTML 由 docker/index.html 提供
-RUN pnpm build
+RUN NODE_OPTIONS=--max-old-space-size=1536 pnpm build
 
 
 # ==========================================================

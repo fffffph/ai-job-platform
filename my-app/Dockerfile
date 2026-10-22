@@ -26,7 +26,7 @@ WORKDIR /app
 # corepack 是 Node 自带的包管理器版本管理器。
 # 用它启用 pnpm，避免 `npm i -g pnpm` 带来的全局污染。
 # 本项目主应用使用 pnpm（锁文件 pnpm-lock.yaml，lockfileVersion 9.0）
-RUN corepack enable && corepack prepare pnpm@11 --activate
+RUN npm i -g pnpm@10 --registry=https://registry.npmmirror.com
 
 # 先只拷贝包管理相关文件
 # 注意：pnpm-workspace.yaml 也必须在 pnpm install 前 COPY 进来，
@@ -38,7 +38,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 #
 # 白名单写在 pnpm-workspace.yaml 的 onlyBuiltDependencies 里
 # （pnpm 11 唯一认可的方式）
-RUN pnpm install --frozen-lockfile --ignore-scripts
+RUN pnpm install --frozen-lockfile --ignore-scripts --registry=https://registry.npmmirror.com
 
 
 # ==========================================================
@@ -46,7 +46,7 @@ RUN pnpm install --frozen-lockfile --ignore-scripts
 # ==========================================================
 FROM node:22-alpine AS builder
 WORKDIR /app
-RUN corepack enable && corepack prepare pnpm@11 --activate
+RUN npm i -g pnpm@10 --registry=https://registry.npmmirror.com
 
 # 复用阶段 1 已装好的 node_modules（不用重装）
 COPY --from=deps /app/node_modules ./node_modules
@@ -69,7 +69,7 @@ ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 # 执行 next build。
 # 因为 next.config.ts 里配了 output: 'standalone'，
 # 产物会落在 .next/standalone/（自包含，含精简版 node_modules）
-RUN pnpm build
+RUN NODE_OPTIONS=--max-old-space-size=1536 pnpm build
 
 
 # ==========================================================

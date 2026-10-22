@@ -2,10 +2,21 @@
 # docker-compose.yml —— CareerAI 一键编排
 # ============================================
 #
-# 【compose 是干什么的】
-# 手写一个个项目 docker build / docker run 要敲一堆参数。
-# compose 用一个 YAML 文件描述"有哪些服务、怎么连、谁先启动"，
-# 之后一条 `docker compose up -d` 全部搞定。
+# 【镜像命名规范（企业级）】
+# 镜像引用 = <registry>/<项目名>/<服务名>:<标签>，标签模板：
+#   <日期yyyyMMdd>-<分支可选>-<git短哈希>-<打包人>-<构建号>
+# 示例：careerai-server:20261018-a1b2c3d-fph-b42
+#
+# 字段含义（从稳定到易变）：
+#   日期      打包时间，肉眼判断新旧、按日期批量清理
+#   分支      仅非主干构建写入（截断 12 字符），主干省略
+#   git短哈希 溯源黄金标准，对应一行代码，可复现构建
+#   打包人    工号/花名缩写（≤4 字符），事故直接定位责任人
+#   构建号    CI 流水线自增号（本地构建为 manual），同批次去重
+#
+# APP_TAG 由 deploy/build.sh 自动生成并注入；
+# 不经脚本直接 compose up 时回退为 dev 标签（仅限本机调试）。
+# 禁止把 latest 推到生产 —— latest 会被覆盖，回滚无从谈起。
 #
 # 【服务清单】
 #   postgres  数据库（仅内网）
@@ -27,7 +38,7 @@ services:
   # 1. 数据库
   # ==========================================
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: careerai-postgres
 
     # env_file：把文件里的变量注入容器（不在 compose 里写死密钥）
@@ -58,7 +69,6 @@ services:
     networks:
       - app-net
     restart: unless-stopped
-
   # ==========================================
   # 2. 后端 Express API
   # ==========================================
@@ -66,6 +76,9 @@ services:
     build:
       context: ./my-app/server
       dockerfile: Dockerfile
+    # 镜像显式命名：构建产物不再叫 ai-job-platform-server（compose 默认行为），
+    # 而是带完整溯源标签，docker images / registry 里一眼可查
+    image: careerai-server:${APP_TAG:-dev}
     container_name: careerai-server
 
     environment:
@@ -105,6 +118,8 @@ services:
       # 传空字符串 = axios 用相对路径 → 请求走同源 → nginx 转发到后端
       args:
         NEXT_PUBLIC_API_URL: ""
+    # 同上：显式命名 + 溯源标签（与 server/subapp 共用同一个 APP_TAG，同批次构建）
+    image: careerai-web:${APP_TAG:-dev}
     container_name: careerai-web
 
     environment:
@@ -124,6 +139,8 @@ services:
     build:
       context: ./resume-optimizer
       dockerfile: Dockerfile
+    # 同上：显式命名 + 溯源标签
+    image: careerai-subapp:${APP_TAG:-dev}
     container_name: careerai-subapp
 
     networks:

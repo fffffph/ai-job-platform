@@ -40,10 +40,29 @@ export type ApiResponse<T = unknown> =
 /** 用户公开资料（来自 GET /api/user/profile） */
 export interface UserProfile {
   id: string;
-  email: string;
+  /** 邮箱（登录标识之一，可能为空） */
+  email: string | null;
+  /** 手机号（登录标识之一，可能为空） */
+  phone: string | null;
+  /** 用户名 / 账号（登录标识之一，可能为空） */
+  username: string | null;
+  /**
+   * 是否已设置登录密码。
+   * 验证码登录自动注册的账号为 false：前端据此把「修改密码」切成
+   * 「首次设置密码」形态，并把「修改登录标识」切成先设密码的引导形态。
+   */
+  hasPassword: boolean;
   name: string | null;
   avatar: string | null;
   bio: string | null;
+  /** 是否需要强制修改密码（管理员代建账号时由后端置 true） */
+  mustChangePassword: boolean;
+  /** 最后登录时间（ISO 字符串；从未登录为 null） */
+  lastLoginAt: string | null;
+  /** 最后登录 IP（可能为空） */
+  lastLoginIp: string | null;
+  /** 最后登录方式：password / email_otp / sms_otp 等 */
+  lastLoginMethod: string | null;
   createdAt: string;
 }
 
@@ -51,6 +70,40 @@ export interface UserProfile {
 export interface UpdateProfileParams {
   name?: string;
   bio?: string;
+}
+
+/**
+ * 修改登录标识请求参数（PUT /api/user/identifiers）。
+ *
+ * 【三个标识的语义（PATCH 风格）】
+ * - 不传（undefined）→ 本次不涉及该标识，**保持库中原值**
+ * - 传 "" 或 null   → 清空该标识
+ * - 传具体值        → 设为该值（后端会归一化：手机号去分隔符、邮箱/用户名转小写）
+ *
+ * 【必须带 password】
+ * 改登录标识是高危操作（可被用来接管账号），后端强制要求当前密码确认。
+ * 无密码账号（管理员代建 / 验证码注册）后端会跳过该校验。
+ */
+export interface UpdateIdentifiersParams {
+  /** 当前密码（身份确认） */
+  password: string;
+  /** 新邮箱 */
+  email?: string | null;
+  /** 新手机号 */
+  phone?: string | null;
+  /** 新用户名 */
+  username?: string | null;
+}
+
+/** 修改登录标识结果 */
+export interface UpdateIdentifiersResult {
+  /** 更新后的用户资料 */
+  profile: UserProfile;
+  /**
+   * 重新签发的 Token（仅在邮箱变更时返回）。
+   * JWT payload 里带 email，邮箱变了要同步替换本地 Token。
+   */
+  token?: string;
 }
 
 /** 修改密码请求参数 */
@@ -98,29 +151,105 @@ export interface AuthResult {
   user: UserProfile;
 }
 
-/** 登录请求参数 */
+/**
+ * 登录请求参数（统一登录入口）
+ *
+ * 推荐只传 identifier：一个输入框，邮箱 / 手机号 / 用户名都能填，
+ * 由后端 resolveIdentifier 判定具体类型。
+ * loginApi 内部会把 identifier 映射到后端的同名字段。
+ */
 export interface LoginParams {
-  email: string;
+  /** 统一账号：邮箱 / 手机号 / 用户名 */
+  identifier: string;
   password: string;
 }
 
 /** 注册请求参数 */
 export interface RegisterParams {
-  email: string;
+  /**
+   * 邮箱地址（可选，登录标识之一）。
+   * 三标识体系下仅用户名也能注册，邮箱 / 用户名至少填一个。
+   */
+  email?: string;
   password: string;
+  /**
+   * 用户名 / 账号（登录标识）。
+   * 注意与 name 区分：username 唯一、只能字母数字下划线中划线，
+   * name 是昵称、仅展示、可重复。
+   */
+  username?: string;
+  /** 昵称（可选，仅展示） */
   name?: string;
+}
+
+// ========== A-P1 验证码相关类型 ==========
+
+/** 验证码业务场景 */
+export type OtpScene = "login" | "reset_password";
+
+/** 发送验证码请求参数 */
+export interface SendCodeParams {
+  /** 收码标识：邮箱 / 手机号 */
+  identifier: string;
+  /** 业务场景 */
+  scene: OtpScene;
+  /** 图形验证码 id（后端要求时携带） */
+  captchaId?: string;
+  /** 图形验证码答案 */
+  captchaText?: string;
+}
+
+/** 发送验证码返回数据 */
+export interface SendCodeResult {
+  /** 验证码有效期（秒），前端据此启动倒计时 */
+  expiresIn: number;
+}
+
+/** 验证码登录请求参数 */
+export interface LoginByCodeParams {
+  identifier: string;
+  code: string;
+}
+
+/** 忘记密码（自助找回）请求参数 */
+export interface ForgotPasswordParams {
+  identifier: string;
+  code: string;
+  newPassword: string;
+}
+
+/** 图形验证码返回数据 */
+export interface CaptchaResult {
+  /** 验证码 id（提交 send-code 时回传） */
+  captchaId: string;
+  /** 可渲染的 SVG 字符串 */
+  svg: string;
+}
+
+/** 图形验证码必要性预检返回数据 */
+export interface CaptchaStatusResult {
+  /** true = 下一次发送验证码需要先完成图形验证码（前端应提前展示输入区） */
+  required: boolean;
 }
 
 // ========== 统一错误码枚举 ==========
 
 /** 后端预定义的业务错误码，前端根据错误码做不同处理 */
 export enum ErrorCode {
-  /** 邮箱已被注册 */
+  /** 邮箱已被注册（历史错误码，保留兼容） */
   EMAIL_EXISTS = "EMAIL_EXISTS",
-  /** 邮箱或密码错误 */
+  /** 登录标识（邮箱/手机号/用户名）已被占用 */
+  IDENTIFIER_EXISTS = "IDENTIFIER_EXISTS",
+  /** 登录标识格式不正确，或三个标识全空 */
+  IDENTIFIER_INVALID = "IDENTIFIER_INVALID",
+  /** 账号或密码错误 */
   INVALID_CREDENTIALS = "INVALID_CREDENTIALS",
+  /** 该账号未设置密码（验证码/OAuth 用户、管理员未设密码的代建账号） */
+  PASSWORD_NOT_SET = "PASSWORD_NOT_SET",
   /** Token 过期或无效 */
   UNAUTHORIZED = "UNAUTHORIZED",
+  /** Token 已被主动吊销（改密码 / 被重置 / 强制下线 / 账号被软删除） */
+  TOKEN_REVOKED = "TOKEN_REVOKED",
   /** 服务器内部错误 */
   SERVER_ERROR = "SERVER_ERROR",
   /** 旧密码不正确 */
@@ -131,8 +260,34 @@ export enum ErrorCode {
   INVALID_KEY_FORMAT = "INVALID_KEY_FORMAT",
   /** 账号已被停用（P0-11，登录/请求被拒） */
   USER_DISABLED = "USER_DISABLED",
+  /**
+   * 必须先修改初始密码才能继续使用（403）。
+   *
+   * 管理员新建用户时开启「首次登录强制修改密码」后，该账号登录成功
+   * 但调用其它接口一律返回此码，直到改完密码。
+   * 前端拦截器收到此码应直接跳转 /change-password。
+   */
+  PASSWORD_CHANGE_REQUIRED = "PASSWORD_CHANGE_REQUIRED",
   /** 权限不足（403，无权限执行此操作） */
   FORBIDDEN = "FORBIDDEN",
+  /** 账号未注册 / 不存在 */
+  ACCOUNT_NOT_FOUND = "ACCOUNT_NOT_FOUND",
+  /** 验证码无效或已过期 */
+  OTP_INVALID = "OTP_INVALID",
+  /** 验证码发送过于频繁（冷却中） */
+  OTP_TOO_FREQUENT = "OTP_TOO_FREQUENT",
+  /** 单标识 1 小时发送次数超限 */
+  OTP_HOURLY_LIMIT = "OTP_HOURLY_LIMIT",
+  /** 单标识每日发送次数超限 */
+  OTP_DAILY_LIMIT = "OTP_DAILY_LIMIT",
+  /** 单 IP 每日发送次数超限 */
+  OTP_IP_LIMIT = "OTP_IP_LIMIT",
+  /** 用户名不支持验证码登录/收码 */
+  OTP_UNSUPPORTED_IDENTIFIER = "OTP_UNSUPPORTED_IDENTIFIER",
+  /** 需要先完成图形验证码 */
+  CAPTCHA_REQUIRED = "CAPTCHA_REQUIRED",
+  /** 图形验证码错误或已过期 */
+  CAPTCHA_INVALID = "CAPTCHA_INVALID",
 }
 
 // ========== 个人知识库（RAG）类型 ==========
@@ -315,15 +470,31 @@ export interface TraceRunDetail extends TraceRunListItem {
 /** 错误码对应的用户提示文案 */
 export const ERROR_MESSAGES: Record<string, string> = {
   [ErrorCode.EMAIL_EXISTS]: "该邮箱已被注册，请使用其他邮箱或直接登录",
-  [ErrorCode.INVALID_CREDENTIALS]: "邮箱或密码错误，请检查后重试",
+  [ErrorCode.IDENTIFIER_EXISTS]: "该账号标识已被占用，请换一个",
+  [ErrorCode.IDENTIFIER_INVALID]:
+    "账号格式不正确，请输入邮箱、手机号或用户名",
+  [ErrorCode.INVALID_CREDENTIALS]: "账号或密码错误，请检查后重试",
+  [ErrorCode.PASSWORD_NOT_SET]:
+    "该账号未设置密码，请联系管理员或用验证码登录",
   [ErrorCode.UNAUTHORIZED]: "登录已过期，请重新登录",
+  [ErrorCode.TOKEN_REVOKED]: "登录状态已失效，请重新登录",
   [ErrorCode.SERVER_ERROR]: "服务器繁忙，请稍后重试",
   [ErrorCode.WRONG_PASSWORD]: "旧密码不正确，请检查后重试",
   [ErrorCode.DEEPSEEK_KEY_NOT_CONFIGURED]:
     "需先在个人中心配置 DeepSeek API Key 才能使用 AI 简历优化",
   [ErrorCode.INVALID_KEY_FORMAT]: "API Key 格式不正确，请检查后重试",
   [ErrorCode.USER_DISABLED]: "账号已被停用，请联系管理员",
+  [ErrorCode.PASSWORD_CHANGE_REQUIRED]: "请先修改初始密码后再继续使用",
   [ErrorCode.FORBIDDEN]: "无权限执行此操作",
+  [ErrorCode.ACCOUNT_NOT_FOUND]: "该账号未注册，请先注册或联系管理员",
+  [ErrorCode.OTP_INVALID]: "验证码无效或已过期，请重新获取",
+  [ErrorCode.OTP_TOO_FREQUENT]: "发送过于频繁，请稍后再试",
+  [ErrorCode.OTP_HOURLY_LIMIT]: "该账号验证码发送过于频繁，请 1 小时后再试",
+  [ErrorCode.OTP_DAILY_LIMIT]: "该账号今日验证码发送次数已达上限，请明天再试",
+  [ErrorCode.OTP_IP_LIMIT]: "当前网络发送验证码过于频繁，请明天再试",
+  [ErrorCode.OTP_UNSUPPORTED_IDENTIFIER]: "用户名无法接收验证码，请改用邮箱或手机号",
+  [ErrorCode.CAPTCHA_REQUIRED]: "请先完成图形验证码",
+  [ErrorCode.CAPTCHA_INVALID]: "图形验证码错误或已过期，请重新获取",
 };
 
 // ========== 系统配置（配置中心）类型 ==========
@@ -338,13 +509,21 @@ export type ConfigType =
   | "json-array"
   | "file";
 
-/** 配置分组（与后端对齐，custom 为管理员新增的「自定义」动态配置组） */
+/**
+ * 配置分组（与后端 config/schema.ts 的 ConfigGroup 对齐）。
+ *
+ * - custom：管理员新增的「自定义」动态配置
+ * - auth  ：登录与账号（A-P0 新增），其中 auth.login.* / auth.otp.* /
+ *           auth.password.min_length 会通过 GET /api/config/public 白名单
+ *           透出给未登录的登录页
+ */
 export type ConfigGroup =
   | "prompt"
   | "llm"
   | "rag"
   | "jobs"
   | "switch"
+  | "auth"
   | "custom";
 
 /** string 类型的下拉选项 */
@@ -536,10 +715,22 @@ export interface SetRoleMenusParams {
 /** 管理侧用户列表项（GET /api/user/list） */
 export interface AdminUserItem {
   id: string;
-  email: string;
+  /** 邮箱（登录标识之一，可空） */
+  email: string | null;
+  /** 手机号（登录标识之一，可空） */
+  phone: string | null;
+  /** 用户名 / 账号（登录标识之一，可空） */
+  username: string | null;
+  /** 昵称（可空） */
   name: string | null;
+  /** 管理员备注（可空） */
+  remark: string | null;
   roles: { id: string; code: string; name: string }[];
   status: UserStatus;
+  /** 是否需要强制修改密码 */
+  mustChangePassword: boolean;
+  /** 最后登录时间（ISO 字符串，从未登录为 null） */
+  lastLoginAt: string | null;
   createdAt: string;
 }
 
@@ -566,4 +757,132 @@ export interface AssignRolesParams {
 /** 设置账号状态入参（PUT /api/user/:id/status） */
 export interface SetUserStatusParams {
   status: UserStatus;
+}
+
+// ============================================================
+// 新增用户（B-P0）
+// ============================================================
+
+/** 登录标识字段（与后端 lib/identifier.ts 的 IdentifierField 对齐） */
+export type IdentifierField = "email" | "phone" | "username";
+
+/**
+ * 新增用户入参（POST /api/user）
+ *
+ * 【三个登录标识至少填一个】，由后端统一校验。
+ */
+export interface CreateUserParams {
+  /** 邮箱（登录标识，可选） */
+  email?: string;
+  /** 手机号（登录标识，可选） */
+  phone?: string;
+  /** 用户名（登录标识，可选） */
+  username?: string;
+  /** 昵称（可选） */
+  name?: string;
+  /** 管理员备注（可选） */
+  remark?: string;
+  /**
+   * 密码来源：
+   * - "default"：使用系统配置项 auth.user.default_password（推荐，省事且统一）
+   * - "custom" ：使用 password 字段传入的密码
+   */
+  passwordMode: "default" | "custom";
+  /** passwordMode === "custom" 时的明文密码 */
+  password?: string;
+  /** 分配的角色 id 数组；为空表示由后端绑定默认 user 角色 */
+  roleIds?: string[];
+  /** 账号状态，默认 active */
+  status?: UserStatus;
+  /** 是否要求首次登录强制改密 */
+  mustChangePassword?: boolean;
+}
+
+/** 新增用户返回数据（POST /api/user） */
+export interface CreateUserResult {
+  id: string;
+  email: string | null;
+  phone: string | null;
+  username: string | null;
+  name: string | null;
+  status: UserStatus;
+  roles: { id: string; code: string; name: string }[];
+  /** 是否使用了系统默认密码（true 时前端提示「密码来自系统配置」） */
+  usedDefaultPassword: boolean;
+  /** 是否需要首次登录强制改密 */
+  mustChangePassword: boolean;
+}
+
+/** 标识唯一性校验结果（GET /api/user/check-identity） */
+export interface IdentifierCheckResult {
+  /** 是否已被占用 */
+  exists: boolean;
+  /** 被占用时说明是哪个字段冲突 */
+  conflictField?: IdentifierField;
+}
+
+// ============================================================
+// 编辑用户 / 重置密码（B-P1）
+// ============================================================
+
+/**
+ * 编辑用户入参（PUT /api/user/:id）。
+ *
+ * 【边界】不含角色（走「分配角色」）、不含状态（走「停用/启用」）；
+ * 三标识 PATCH 语义：undefined = 保持原值，"" 或 null = 清空（至少保留一个）。
+ */
+export interface UpdateUserParams {
+  /**
+   * 用户名：仅在目标用户尚未设置时允许提交（首次设置，设置后不可改）。
+   * 已有用户名的用户不要传此字段 —— 后端会强制沿用库中现值。
+   */
+  username?: string;
+  email?: string | null;
+  phone?: string | null;
+  name?: string | null;
+  remark?: string | null;
+  mustChangePassword?: boolean;
+}
+
+/**
+ * 重置密码入参（PUT /api/user/:id/reset-password）。
+ * 复用「系统默认密码 / 自定义」二选一。
+ */
+export interface ResetPasswordParams {
+  passwordMode: "default" | "custom";
+  password?: string;
+}
+
+// ============================================================
+// 公开配置（GET /api/config/public）
+// ============================================================
+
+/**
+ * 公开配置映射（登录页 / 注册页在未登录状态读取）。
+ *
+ * 只含开关与策略类配置，不含任何敏感值。
+ */
+export interface PublicConfigMap {
+  /** 是否开放自助注册 */
+  "auth.register.enabled"?: boolean;
+  /** 密码登录总开关 */
+  "auth.login.password"?: boolean;
+  /** 是否允许用户名登录 */
+  "auth.login.username"?: boolean;
+  /** 是否允许手机号 + 密码登录 */
+  "auth.login.phone"?: boolean;
+  /** 邮箱验证码登录开关 */
+  "auth.login.email_otp"?: boolean;
+  /** 手机短信验证码登录开关 */
+  "auth.login.sms_otp"?: boolean;
+  /** 验证码登录未注册时是否自动注册 */
+  "auth.login.otp_auto_register"?: boolean;
+  /** 发验证码前是否强制图形验证 */
+  "auth.captcha.required"?: boolean;
+  /** 验证码有效期（秒） */
+  "auth.otp.ttl_seconds"?: number;
+  /** 验证码重发冷却（秒） */
+  "auth.otp.resend_seconds"?: number;
+  /** 密码最小长度 */
+  "auth.password.min_length"?: number;
 }

@@ -16,6 +16,7 @@
     "db:studio": "prisma studio",
     "db:seed": "tsx prisma/seed.ts",
     "db:seed:roles": "tsx prisma/seed-roles.ts",
+    "db:indexes": "tsx --env-file=.env prisma/ensure-indexes.ts",
     "mcp:dev": "tsx watch src/ai/tools/mcp/knowledge-server.ts"
   },
   "keywords": [],
@@ -38,6 +39,7 @@
     "jsonwebtoken": "^9.0.3",
     "mammoth": "^1.12.0",
     "multer": "^2.2.0",
+    "nodemailer": "^10.1.2",
     "pdf2json": "^4.0.3",
     "prisma": "^7.8.0",
     "puppeteer-core": "^25.11.0",
@@ -50,6 +52,7 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/multer": "^2.2.0",
     "@types/node": "^20.19.41",
+    "@types/nodemailer": "^8.0.2",
     "tsx": "^4.19.0",
     "typescript": "^5.9.3"
   }

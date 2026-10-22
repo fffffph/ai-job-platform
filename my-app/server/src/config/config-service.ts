@@ -22,6 +22,7 @@ import prisma from "../lib/prisma.js";
 import type { Prisma } from "@prisma/client";
 import {
   CONFIG_SCHEMA,
+  PUBLIC_CONFIG_KEYS,
   findConfig,
   getConfigsByGroup,
   isValidConfigKey,
@@ -201,6 +202,30 @@ export async function getConfigGroup(
   const result: Record<string, unknown> = {};
   for (const def of defs) {
     result[def.key] = await getConfig(def.key);
+  }
+  return result;
+}
+
+/**
+ * 读取「公开配置」（未登录页面可读的白名单项）。
+ *
+ * 【用途】
+ * 登录页 / 注册页在**未登录**状态下需要知道「显示哪些登录方式、
+ * 验证码倒计时多少秒、密码最短多少位」，但 GET /api/config 需要登录态。
+ * 因此提供一个严格的键白名单读取入口，只返回 PUBLIC_CONFIG_KEYS 里的项。
+ *
+ * 【安全边界】
+ * 白名单由 schema.ts 的 PUBLIC_CONFIG_KEYS 集中维护，
+ * 绝不包含 prompt 文案、模型参数、默认密码等敏感项。
+ * 即便将来有人误把敏感键加进白名单，也只暴露「值」——所以白名单注释里
+ * 明确写了「只加开关类项」的维护规则。
+ *
+ * @returns key → 有效值 的映射（仅白名单内的键）
+ */
+export async function getPublicConfigs(): Promise<Record<string, unknown>> {
+  const result: Record<string, unknown> = {};
+  for (const key of PUBLIC_CONFIG_KEYS) {
+    result[key] = await getConfig(key);
   }
   return result;
 }

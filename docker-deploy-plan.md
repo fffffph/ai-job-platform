@@ -178,6 +178,10 @@ DEEPSEEK_API_KEY=sk-xxx             # 留空则后端自动 Mock 兜底
 ## 五、实施步骤（审查通过后执行）
 
 ```bash
+# 0. 【推荐】带溯源标签一键打包（自动生成 APP_TAG，见下方"镜像命名规范"）
+./deploy/build.sh              # 构建全部三个镜像并滚动更新
+./deploy/build.sh server       # 只构建/重启指定服务
+
 # 1. 构建全部镜像（首次约 5-10 分钟，Windows 磁盘 IO 慢属正常）
 docker compose build
 
@@ -186,13 +190,31 @@ docker compose up -d
 
 # 3. 查看启动状态与健康检查
 docker compose ps
-docker compose logs -f server    # 确认 prisma migrate + Express 启动日志
+docker compose logs -f server    # 确认 db push + 种子 + Express 启动日志
 
 # 4. 访问验证
 #    主应用：      http://localhost:8080
 #    登录 → 简历优化页面（验证 qiankun 子应用加载）
 #    健康检查：    http://localhost:8080/api/health
 ```
+
+### 镜像命名规范（2026-10-18 起生效）
+
+```
+镜像引用 = <registry>/<项目名>/<服务名>:<日期>-<分支可选>-<git短哈希>-<打包人>-<构建号>
+示例：careerai-server:20261018-a1b2c3d-fph-b42
+      careerai-web:20261018-featlogin-a1b2c3d-fph-b42   ← 分支构建带截断分支段
+```
+
+| 要素 | 来源 | 说明 |
+|------|------|------|
+| 日期 | `date +%Y%m%d` | 肉眼判断新旧；按日期批量清理过期镜像 |
+| 分支 | `git rev-parse --abbrev-ref` | 仅非主干写入，转小写清洗后截断 12 字符 |
+| git短哈希 | `git rev-parse --short HEAD` | 溯源黄金标准，`git checkout <hash>` 可复现构建 |
+| 打包人 | `$IMAGE_BUILDER` 或 `whoami` | 转小写截断 4 字符；事故直接定位责任人 |
+| 构建号 | `$CI_PIPELINE_ID` 或 `manual` | 同日期同人多次构建去重，数字大 = 更新 |
+
+规则：`deploy/build.sh` 自动生成 `APP_TAG` 注入 compose（三个自建镜像共用同批次标签）；未经脚本直接 `compose up` 时回退 `:dev`（仅限本机调试）。**禁止 latest 进生产**。推 Harbor 时给镜像名加 `harbor.example.com/` 前缀即可。
 
 ### 验证清单
 
