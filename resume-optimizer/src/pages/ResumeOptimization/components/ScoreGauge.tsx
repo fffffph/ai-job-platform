@@ -25,10 +25,19 @@ const tagColorMap: Record<string, string> = {
 
 const ScoreGauge: React.FC<Props> = ({ score, tags, highlights }) => {
   // 读父级 html class → 决定进度环的渐变色
-  const [isDark, setIsDark] = useState(false);
+  //
+  // 【为什么用 useState 的惰性初始化，而不是在 effect 里同步 setIsDark】
+  //   在 effect 里同步 setState 会触发「渲染 → effect → setState → 再渲染」
+  //   的级联渲染（React Compiler 的 react-hooks/set-state-in-effect 会报错）。
+  //   初始值本来就能在渲染时直接读到，没有任何理由绕一圈到 effect 里设置。
+  //   effect 只保留「订阅后续变化」的职责。
+  const [isDark, setIsDark] = useState<boolean>(
+    () => typeof document !== "undefined" && document.documentElement.classList.contains("dark"),
+  );
+
   useEffect(() => {
     const root = document.documentElement;
-    setIsDark(root.classList.contains("dark"));
+    // MutationObserver 的回调是异步触发的，这里的 setState 不受上述规则约束
     const obs = new MutationObserver(() => {
       setIsDark(root.classList.contains("dark"));
     });
@@ -96,8 +105,8 @@ const ScoreGauge: React.FC<Props> = ({ score, tags, highlights }) => {
             {score >= 80
               ? "优秀！您的简历竞争力很强"
               : score >= 60
-              ? "良好，还有一些可提升的空间"
-              : "建议根据下方建议进行全面优化"}
+                ? "良好，还有一些可提升的空间"
+                : "建议根据下方建议进行全面优化"}
           </p>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {tags.map((t, i) => (

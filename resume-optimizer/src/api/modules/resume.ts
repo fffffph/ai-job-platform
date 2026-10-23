@@ -21,9 +21,7 @@ import type {
 const API_BASE = import.meta.env.PROD ? "" : "http://localhost:4000";
 
 /** 解析简历文件 */
-export async function parseResumeApi(
-  file: File
-): Promise<ApiResponse<ParseResult>> {
+export async function parseResumeApi(file: File): Promise<ApiResponse<ParseResult>> {
   try {
     const formData = new FormData();
     formData.append("file", file);
@@ -41,7 +39,7 @@ export async function parseResumeApi(
 
 /** 首轮 AI 优化 */
 export async function optimizeResumeApi(
-  params: OptimizeRequest
+  params: OptimizeRequest,
 ): Promise<ApiResponse<OptimizeResult>> {
   try {
     return await client.post("/api/resume/optimize", params);
@@ -55,9 +53,7 @@ export async function optimizeResumeApi(
 }
 
 /** 对话式迭代修改 */
-export async function chatResumeApi(
-  params: ChatRequest
-): Promise<ApiResponse<ChatResult>> {
+export async function chatResumeApi(params: ChatRequest): Promise<ApiResponse<ChatResult>> {
   try {
     return await client.post("/api/resume/chat", params);
   } catch (error: any) {
@@ -109,14 +105,14 @@ export interface OptimizeStreamHandlers {
 export async function optimizeResumeStream(
   text: string,
   handlers: OptimizeStreamHandlers,
-  options?: { thinking?: boolean; signal?: AbortSignal }
+  options?: { thinking?: boolean; signal?: AbortSignal },
 ): Promise<void> {
   // 显式传布尔值：后端只认 === true，显式 false 语义更清晰也便于抓包
   return postResumeStream<OptimizeResult>(
     "/api/resume/optimize-stream",
     { text, thinking: options?.thinking === true },
     handlers,
-    options
+    options,
   );
 }
 
@@ -148,7 +144,7 @@ export async function chatResumeStream(
     context?: SectionContext;
   },
   handlers: ChatStreamHandlers,
-  options?: { thinking?: boolean; signal?: AbortSignal }
+  options?: { thinking?: boolean; signal?: AbortSignal },
 ): Promise<void> {
   return postResumeStream<ChatResult>(
     "/api/resume/chat-stream",
@@ -160,7 +156,7 @@ export async function chatResumeStream(
       thinking: options?.thinking === true,
     },
     handlers,
-    options
+    options,
   );
 }
 
@@ -184,7 +180,7 @@ async function postResumeStream<TDone>(
     onDone?: (result: TDone) => void;
     onError?: (message: string, code?: string) => void;
   },
-  options?: { signal?: AbortSignal }
+  options?: { signal?: AbortSignal },
 ): Promise<void> {
   const token = getToken();
 
@@ -227,7 +223,7 @@ async function postResumeStream<TDone>(
   }
 
   await readSSEStream(response, (evt) => {
-    let payload: Record<string, unknown> = {};
+    let payload: Record<string, unknown>;
     try {
       payload = JSON.parse(evt.data) as Record<string, unknown>;
     } catch {
@@ -256,9 +252,7 @@ async function postResumeStream<TDone>(
 }
 
 /** 获取当前用户 DeepSeek API Key 状态（用于入口拦截） */
-export async function getDeepSeekKeyStatusApi(): Promise<
-  ApiResponse<DeepSeekKeyStatus>
-> {
+export async function getDeepSeekKeyStatusApi(): Promise<ApiResponse<DeepSeekKeyStatus>> {
   try {
     return await client.get("/api/user/deepseek-key");
   } catch (error: any) {

@@ -18,7 +18,7 @@
  *   { token, isLoggedIn, isInQiankun, setToken, removeToken }
  */
 
-import React, { createContext, useContext, useState, useCallback, useEffect } from "react";
+import React, { createContext, useContext, useState, useCallback } from "react";
 import {
   getToken as getAuthToken,
   setToken as setAuthToken,
@@ -91,11 +91,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     removeToken: handleRemoveToken,
   };
 
-  return (
-    <AuthContext.Provider value={value}>
-      {children}
-    </AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 /**
@@ -110,7 +106,7 @@ export function useAuth(): AuthState {
 
   if (!context) {
     throw new Error(
-      "useAuth 必须在 AuthProvider 内部使用。请检查 App.tsx 中是否正确包裹了 <AuthProvider>"
+      "useAuth 必须在 AuthProvider 内部使用。请检查 App.tsx 中是否正确包裹了 <AuthProvider>",
     );
   }
 
