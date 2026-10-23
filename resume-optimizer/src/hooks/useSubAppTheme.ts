@@ -53,13 +53,11 @@ function resolveEffectiveTheme(mode: "dark" | "light" | "system"): "dark" | "lig
  */
 export function useSubAppTheme(): { isDark: boolean } {
   const [mode, setMode] = useState<"dark" | "light" | "system">(readThemeMode);
-  const [systemDark, setSystemDark] = useState<boolean>(
-    () =>
-      typeof window !== "undefined" &&
-      window.matchMedia("(prefers-color-scheme: dark)").matches,
-  );
-
   // ---------- 监听 <html> class 变化（next-themes 切主题） ----------
+  // 说明：原先这里还有一个 systemDark state + OS 主题 matchMedia 监听，
+  // 但 systemDark 从未被读取（isDark 完全由 <html> 的 class 决定，
+  // system 模式下 next-themes 已把正确结果写进 class），
+  // 属于死代码。P1 补齐 lint 时一并删除，行为不变。
   useEffect(() => {
     const root = document.documentElement;
     const observer = new MutationObserver(() => {
@@ -67,14 +65,6 @@ export function useSubAppTheme(): { isDark: boolean } {
     });
     observer.observe(root, { attributes: true, attributeFilter: ["class"] });
     return () => observer.disconnect();
-  }, []);
-
-  // ---------- 监听 OS 主题（system 模式下用） ----------
-  useEffect(() => {
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const onChange = (e: MediaQueryListEvent) => setSystemDark(e.matches);
-    mq.addEventListener?.("change", onChange);
-    return () => mq.removeEventListener?.("change", onChange);
   }, []);
 
   const isDark = resolveEffectiveTheme(mode) === "dark";

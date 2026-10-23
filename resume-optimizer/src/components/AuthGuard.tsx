@@ -23,7 +23,7 @@ import SubLogin from "../pages/SubLogin";
  * 不需要自己检查登录状态。
  */
 const AuthGuard: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { isLoggedIn, isInQiankun, token, setToken } = useAuth();
+  const { isLoggedIn, isInQiankun, setToken } = useAuth();
 
   // ---------- 已登录 → 渲染子组件 ----------
   if (isLoggedIn) {

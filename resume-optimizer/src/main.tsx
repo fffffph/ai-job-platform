@@ -78,7 +78,7 @@ function render(props: QiankunProps = {}) {
       "[resume-optimizer] Auth 工具已初始化（qiankun 模式），token:",
       props.token ? "已获取" : "无",
       "| 配置读取:",
-      props.getConfigValue ? "已注入" : "未注入（将走默认值）"
+      props.getConfigValue ? "已注入" : "未注入（将走默认值）",
     );
   } else {
     console.log("[resume-optimizer] 独立模式启动，将使用独立登录");
@@ -86,9 +86,7 @@ function render(props: QiankunProps = {}) {
 
   // ---------- 获取挂载容器 ----------
   const { container } = props;
-  const domNode = container
-    ? container.querySelector("#root")
-    : document.getElementById("root");
+  const domNode = container ? container.querySelector("#root") : document.getElementById("root");
 
   if (!domNode) {
     console.error("[resume-optimizer] 未找到挂载容器节点");
@@ -156,7 +154,7 @@ export async function mount(props: QiankunProps = {}) {
   console.log("[resume-optimizer] export mount");
   render(props);
 }
-export async function unmount(props: QiankunProps = {}) {
+export async function unmount() {
   console.log("[resume-optimizer] export unmount");
   cleanup();
 }
