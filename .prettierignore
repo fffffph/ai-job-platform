@@ -1,0 +1,36 @@
+# ============================================================
+# Prettier 忽略清单
+# 目的：只让 Prettier 管「人手写的源码与文档」，
+#       构建产物、依赖、锁文件、二进制一律不碰。
+# ============================================================
+
+# 依赖目录（三个子项目各有一份）
+**/node_modules
+
+# 构建产物
+**/.next
+**/dist
+**/build
+**/out
+**/coverage
+**/tsconfig.tsbuildinfo
+
+# 锁文件（体积大、机器生成，格式化只会制造无意义 diff）
+pnpm-lock.yaml
+package-lock.json
+
+# 压缩产物
+*.min.js
+*.min.css
+
+# 用户上传的二进制（后端 multer 落盘目录）
+my-app/server/uploads
+
+# 截图与部署包（二进制，Prettier 也不支持）
+docs/screenshots
+deploy/*.tar.gz
+
+# 工具与编辑器目录（已被 .gitignore 忽略，这里再挡一层避免 Prettier 扫盘浪费）
+.workbuddy
+.trae
+.github

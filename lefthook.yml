@@ -1,0 +1,163 @@
+# ============================================================
+# lefthook.yml —— 本地提交质量门禁
+#
+# ⚠️ 语法说明：本文件使用 lefthook v2 的 `jobs:` 数组语法。
+#    v1 时代的 `commands:` + 命名映射写法在 v2 已被 jobs 取代。
+#    min_version 会在装错版本时直接报错，
+#    而不是静默失效（静默失效的钩子比没有钩子更危险）。
+#
+# ============================================================
+# 【钩子分工：全部基于本机实测数据】
+#
+#   pre-commit（约 2 秒）
+#     prettier 0.8s / secrets 1.2s / hygiene 2.1s（并行，取最大值）
+#     ↑ 只拦「不该进仓库的东西」
+#
+#   pre-push（约 10~16 秒）
+#     eslint-web 6~10s / eslint-subapp 6s / eslint-server 9s
+#     typecheck-server 9s / typecheck-subapp 12s（并行，取最大值）
+#     ↑ 拦「会污染主干的错误」
+#
+#   CI（分钟级，已有 ci.yml）
+#     my-app 全量 tsc + next build + 全量 eslint
+#     ↑ 拦「结构性/工程级问题」
+#
+# 【为什么 ESLint 不在 pre-commit 里】
+#   实测：my-app 的 eslint 单文件执行 7.0 秒，其中 --print-config
+#   （纯配置加载）就占 4.5 秒 —— 这是 eslint-config-next 加载
+#   typescript-eslint/react-hooks 等整套插件的固定成本，
+#   与文件数量无关，--cache 也消不掉（实测加缓存后仍是 6.95s）。
+#   每次提交都等 7 秒，必然逼出 git commit --no-verify，
+#   钩子等于白装。所以它归 pre-push。
+#
+# 【为什么 my-app 的 tsc 既不在 pre-commit 也不在 pre-push】
+#   实测：tsc --noEmit -p my-app/tsconfig.json 需要 2 分 22 秒
+#   （220 个源码文件 + Next 16 / React 19 / antd v6 类型推断量巨大，
+#     tsconfig 里 incremental 已开启，仍压不下来）。
+#   这个量级只适合 CI，而 CI 的 next build 本身就包含类型检查。
+# ============================================================
+
+min_version: 2.0.0
+
+# ============================================================
+# 提交前：只拦「脏东西」
+# ============================================================
+pre-commit:
+  # 并行执行：格式化、密钥扫描、卫生检查同时跑，总耗时 ≈ 最慢那一项
+  parallel: true
+
+  jobs:
+    # ----------------------------------------------------------
+    # 1. 格式化：Prettier（三个子项目统一）
+    #    --ignore-unknown：遇到不认识的扩展名直接跳过，不报错
+    # ----------------------------------------------------------
+    - name: prettier
+      glob: "*.{js,jsx,ts,tsx,json,css,md,yml,yaml,html}"
+      run: node node_modules/prettier/bin/prettier.cjs --write --ignore-unknown {staged_files}
+      # stage_fixed：格式化结果自动重新 git add，
+      # 否则会出现「文件被改了但没进本次提交」的困惑
+      stage_fixed: true
+
+    # ----------------------------------------------------------
+    # 2. 密钥泄露扫描：secretlint
+    #
+    #    preset-recommend 覆盖 AWS/GCP/GitHub/GitLab Token、私钥、
+    #    数据库连接串、OpenAI/Anthropic 等 28 类凭据；
+    #    .secretlintrc.json 里另加了 3 条自定义规则，其中
+    #    「sk- 风格 API Key」是本项目必需 —— 实测 preset 的 openai
+    #    规则只认 OpenAI 官方 key 长度，抓不到 DeepSeek 的
+    #    sk- + 32 位格式，不补这条等于对项目最关键的密钥视而不见。
+    # ----------------------------------------------------------
+    - name: secrets
+      glob: "*.{js,jsx,ts,tsx,json,yml,yaml,md,sh,html,css,txt}"
+      run: node node_modules/secretlint/bin/secretlint.js {staged_files}
+      fail_text: "发现疑似密钥/凭据泄露。请改用环境变量读取，并轮换已暴露的密钥"
+
+    # ----------------------------------------------------------
+    # 3. 工程卫生：大文件 + 未解决冲突标记
+    #    逻辑放在独立 .sh 里（Windows 下多行 bash 内联会语法报错）
+    # ----------------------------------------------------------
+    - name: hygiene
+      run: bash .lefthook/check-hygiene.sh {staged_files}
+
+# ============================================================
+# 提交信息校验：必须符合 Conventional Commits
+# 正例：feat(auth): 支持手机号登录
+# 反例：update code / 修复bug（缺 type）
+# ============================================================
+commit-msg:
+  jobs:
+    - name: commitlint
+      # {1} = 提交信息文件路径（.git/COMMIT_EDITMSG）
+      run: node node_modules/@commitlint/cli/cli.js --edit {1}
+      fail_text: "提交信息不符合规范，正确格式：type(scope): 描述"
+
+# ============================================================
+# 推送前：拦「会污染主干的错误」
+#
+# 【为什么三个 lint 都走 .lefthook/eslint-run.sh 包装脚本】
+#   lefthook 的 {push_files} 是「本次推送涉及的全部文件」，
+#   它【不受】job 的 glob / exclude 过滤（glob 只决定 job 是否启动）。
+#   直接用它当 eslint 参数会出两个真实问题：
+#     1. 跨项目误检：推 server 的文件时，my-app 的 job 也会收到它，
+#        用 Next 规则集分析后端代码 → 实测 58.6s
+#     2. 空列表退化：过滤后无文件时 eslint 无参数 = 扫描整个目录
+#        → 实测 10s 且报一堆与本次推送无关的历史问题
+#   包装脚本负责「真过滤」+「空则跳过」，两者都已实测修复。
+# ============================================================
+pre-push:
+  parallel: true
+
+  jobs:
+    # ----------------------------------------------------------
+    # 1a. ESLint：主应用 my-app（Next.js）
+    #     排除 my-app/server/ —— 它是独立 npm 项目（自己的 tsconfig
+    #     与 eslint 配置），物理位置虽在 my-app 内但与 Next 应用无关。
+    # ----------------------------------------------------------
+    - name: eslint-web
+      glob: "my-app/**/*.{js,jsx,ts,tsx}"
+      exclude:
+        - "my-app/server/**"
+      run: bash .lefthook/eslint-run.sh my-app my-app/server/ node_modules/eslint/bin/eslint.js 1 {push_files}
+      fail_text: "主应用 ESLint 检查未通过，请先修复再推送"
+
+    # ----------------------------------------------------------
+    # 1b. ESLint：子应用 resume-optimizer（Vite + React 19）
+    #     P1 新增。非类型感知，可安全使用 --cache 加速。
+    # ----------------------------------------------------------
+    - name: eslint-subapp
+      glob: "resume-optimizer/**/*.{ts,tsx}"
+      run: bash .lefthook/eslint-run.sh resume-optimizer - node_modules/eslint/bin/eslint.js 1 {push_files}
+      fail_text: "子应用 ESLint 检查未通过，请先修复再推送"
+
+    # ----------------------------------------------------------
+    # 1c. ESLint：后端 server（Express 5 + Prisma）
+    #     P1 新增，含 3 条类型感知规则（no-floating-promises /
+    #     no-misused-promises / await-thenable），专防「异步错误被吞」。
+    #
+    #     ⚠️ 刻意【不开】--cache：typescript-eslint 官方提示，
+    #     类型感知规则依赖跨文件类型信息，而 ESLint 缓存只按
+    #     「当前文件内容哈希」判断命中；当依赖的类型定义变了但
+    #     本文件没变时会复用旧结果 → 可能漏报。
+    #     正确性优先，代价约 9 秒（仅在 push 且改动 server 时跑）。
+    # ----------------------------------------------------------
+    - name: eslint-server
+      glob: "my-app/server/**/*.ts"
+      run: bash .lefthook/eslint-run.sh my-app/server - node_modules/eslint/bin/eslint.js 0 {push_files}
+      fail_text: "后端 ESLint 检查未通过，请先修复再推送"
+
+    # ----------------------------------------------------------
+    # 2. 类型检查：后端 Express（实测 9~12 秒）
+    # ----------------------------------------------------------
+    - name: typecheck-server
+      glob: "my-app/server/**/*.ts"
+      run: node my-app/server/node_modules/typescript/bin/tsc --noEmit -p my-app/server/tsconfig.json
+      fail_text: "后端 TypeScript 类型检查未通过"
+
+    # ----------------------------------------------------------
+    # 3. 类型检查：子应用 Vite（实测 12~17 秒）
+    # ----------------------------------------------------------
+    - name: typecheck-subapp
+      glob: "resume-optimizer/**/*.{ts,tsx}"
+      run: node resume-optimizer/node_modules/typescript/bin/tsc --noEmit -p resume-optimizer/tsconfig.json
+      fail_text: "子应用 TypeScript 类型检查未通过"
